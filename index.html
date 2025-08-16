@@ -3,20 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 完整版 (Storage优化)</title>
+    <title>眼动追踪数据收集系统 - 完整版 (Cloudinary优化)</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
-    <!-- 【新增】引入Firebase Storage SDK -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+    <!-- 【已移除】不再需要Firebase Storage SDK -->
     
     <script>
         const firebaseConfig = {
             apiKey: "AIzaSyB6O5l6uZa-6sywCZTGRJx2CKPuq3KeBF0",
             authDomain: "index-9f58d.firebaseapp.com",
             projectId: "index-9f58d",
-            storageBucket: "index-9f58d.appspot.com", // 【注意】这里通常是 xxx.appspot.com
+            storageBucket: "index-9f58d.appspot.com",
             messagingSenderId: "718279245978",
             appId: "1:718279245978:web:93a9a07473ad8d3e6a5f23"
         };
@@ -24,8 +23,7 @@
         // 初始化 Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        // 【新增】初始化Firebase Storage
-        const storage = firebase.storage();
+        // 【已移除】不再需要初始化Firebase Storage
         
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         const userId = 'index';
@@ -285,18 +283,19 @@
         
         function startHeatmapSnapshots() {
             if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval);
-            // 【修改】间隔调整为2秒，因为上传需要时间
-            heatmapSnapshotInterval = setInterval(() => { if (heatmapInstance && isTracking) captureHeatmapSnapshot(); }, 1000);
+            heatmapSnapshotInterval = setInterval(() => { if (heatmapInstance && isTracking) captureHeatmapSnapshot(); }, 2000); // 间隔调整为2秒
         }
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
 
-        // 【重大修改】将此函数改为异步，并上传到Firebase Storage
+        // ==============================================================
+        // 【核心修改】将此函数改为异步，并上传到 Cloudinary
+        // ==============================================================
         async function captureHeatmapSnapshot() {
             try {
                 const canvas = document.getElementById('heatmapContainer').querySelector('canvas');
-                if (!canvas || !firebaseConnected) {
-                    if (!firebaseConnected) debug('无法捕获热力图快照：Firebase未连接。');
+                if (!canvas) {
+                    debug('无法捕获热力图快照：Canvas未找到。');
                     return;
                 }
                 
@@ -307,30 +306,43 @@
                     try {
                         const imageDataUrl = canvas.toDataURL('image/png', 0.8);
                         
-                        // 创建唯一的文件名
-                        const timestamp = Date.now();
-                        const fileName = `heatmaps/${userId}/${sessionId}/${timestamp}.png`;
-                        
-                        // 获取Storage引用
-                        const storageRef = storage.ref(fileName);
-                        
-                        // 直接上传Base64字符串
-                        debug(`开始上传热力图: ${fileName}`);
-                        const uploadTask = await storageRef.putString(imageDataUrl, 'data_url');
-                        
-                        // 获取下载URL
-                        const downloadURL = await uploadTask.ref.getDownloadURL();
-                        debug(`热力图上传成功: ${downloadURL.substring(0, 50)}...`);
+                        // --- Cloudinary 配置 ---
+                        const cloudName = 'ddp3tohxk';       // 您的 Cloud Name
+                        const uploadPreset = 'index1';       // 您的 Unsigned Upload Preset 名称
 
-                        // 存储URL而不是Base64数据
+                        const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+
+                        const formData = new FormData();
+                        formData.append('file', imageDataUrl);
+                        formData.append('upload_preset', uploadPreset);
+                        formData.append('folder', `heatmaps/${userId}/${sessionId}`); // 自动创建文件夹
+
+                        debug(`开始上传热力图到 Cloudinary...`);
+                        
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(`Cloudinary上传失败: ${errorData.error.message}`);
+                        }
+
+                        const data = await response.json();
+                        const secureUrl = data.secure_url;
+
+                        debug(`热力图上传成功: ${secureUrl}`);
+
+                        // 将 Cloudinary URL 存入数据对象
                         eyeTrackingData.heatmapSnapshots.push({ 
-                            timestamp: new Date(timestamp).toISOString(), 
-                            storageUrl: downloadURL, 
+                            timestamp: new Date().toISOString(), 
+                            storageUrl: secureUrl,
+                            provider: 'cloudinary',
                             sessionId, 
                             userId 
                         });
                         heatmapSnapshotCount++;
-                        // 因为是异步的，所以在这里更新UI
                         updateStatsDisplay();
 
                     } catch (e) {
@@ -359,14 +371,14 @@
             if (totalPoints === 0) { if(isManual) swal('提示', '没有新数据可保存。', 'info'); return; }
 
             const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
-            // 【注意】payload中的heatmapData现在包含的是URL对象数组
             const payload = { sessionId, userId, timestamp: new Date().toISOString(), dataType: isManual ? 'manual' : 'auto', gazeData: dataToSave.gazePoints, saccadeData: dataToSave.saccades, fixationData: dataToSave.fixations, heatmapData: dataToSave.heatmapSnapshots, calibrationInfo: dataToSave.calibrationData };
             
             eyeTrackingData.gazePoints = []; eyeTrackingData.saccades = []; eyeTrackingData.fixations = []; eyeTrackingData.heatmapSnapshots = [];
             
             updateCollectionStatus('保存中...', 'uploading');
             try {
-                await db.collection("eye_tracking_comprehensive_v3_storage").add(payload); // 建议使用新集合名以区分数据结构
+                // 集合名称保持不变，因为只是改变了图片的存储位置
+                await db.collection("eye_tracking_comprehensive_v3_storage").add(payload);
                 snapshotCount++;
                 updateCollectionStatus('进行中 (自动)', 'connected');
                 debug(`数据快照 #${snapshotCount} 保存成功`);
@@ -496,7 +508,7 @@
                 if (typeof h337 === 'undefined' || typeof swal === 'undefined') throw new Error('依赖库加载失败');
                 if (!await loadWebGazerScript() || typeof webgazer === 'undefined') throw new Error('WebGazer加载失败');
                 heatmapInstance = h337.create({ container: document.getElementById('heatmapContainer'), radius: 25, maxOpacity: 0.6, minOpacity: 0.1, blur: 0.8 });
-                await testFirebaseConnection();
+                await testFirebaseConnection(); // 仍然测试Firestore连接
                 updateStatus('系统就绪', 'ready');
                 document.getElementById('startBtn').disabled = false;
                 librariesLoaded = true;
