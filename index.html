@@ -60,7 +60,8 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1000; opacity: 0.7; display: none; }
+        /* 【修改点 1】将 display: none; 改为 visibility: hidden; */
+        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1000; opacity: 0.7; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
@@ -100,7 +101,8 @@
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status.connected { background: #4CAF50; color: white; } .collection-status.disconnected { background: #f44336; color: white; } .collection-status.uploading { background: #ff9800; color: white; }
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
-        .heatmap-visible { opacity: 0.7 !important; display: block !important; }
+        /* 【修改点 2】将 display: block !important; 改为 visibility: visible !important; */
+        .heatmap-visible { opacity: 0.7 !important; visibility: visible !important; }
     </style>
 </head>
 <body>
@@ -288,9 +290,6 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
 
-        // ==============================================================
-        // 【核心修改】将此函数改为异步，并上传到 Cloudinary
-        // ==============================================================
         async function captureHeatmapSnapshot() {
             try {
                 const canvas = document.getElementById('heatmapContainer').querySelector('canvas');
