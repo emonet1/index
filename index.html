@@ -60,7 +60,6 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        /* 【修改点 1】将 display: none; 改为 visibility: hidden; */
         #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1000; opacity: 0.7; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -101,7 +100,6 @@
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status.connected { background: #4CAF50; color: white; } .collection-status.disconnected { background: #f44336; color: white; } .collection-status.uploading { background: #ff9800; color: white; }
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
-        /* 【修改点 2】将 display: block !important; 改为 visibility: visible !important; */
         .heatmap-visible { opacity: 0.7 !important; visibility: visible !important; }
     </style>
 </head>
@@ -427,31 +425,58 @@
         }
         function hideAllCalibrationPoints() { for (let i = 1; i <= 9; i++) document.getElementById("Pt" + i).style.display = 'none'; }
         
+        // =======================================================================
+        // 【核心修改】替换为健壮性更强的精度计算函数
+        // =======================================================================
         function calculateCalibrationAccuracy() {
             isStoring = false;
             hideAllCalibrationPoints();
-            if (!webgazer || !webgazer.isReady || !webgazer.isReady()) {
-                setTimeout(calculateCalibrationAccuracy, 200);
-                return;
-            }
-            try {
-                const regression = webgazer.getRegression();
-                if (regression && typeof regression.getAccuracy === 'function') {
-                    const accuracy = regression.getAccuracy();
-                    if (accuracy !== null && typeof accuracy === 'number') {
-                        const accuracyStr = accuracy.toFixed(0);
-                        document.getElementById('Accuracy').innerHTML = "校准精度: " + accuracyStr + "px";
-                        eyeTrackingData.calibrationData = { points: CalibrationPoints, accuracy: accuracyStr, timestamp: new Date().toISOString(), sessionId, userId };
-                        updateStatus(`校准完成 - 精度: ${accuracyStr}px`, 'ready');
-                        swal('校准完成', `校准精度: ${accuracyStr}px`, 'success');
-                    } else { throw new Error('getAccuracy() did not return a number.'); }
-                } else { throw new Error('Regression model or getAccuracy function not available.'); }
-            } catch (error) {
-                debug(`精度计算失败: ${error.message}`);
-                document.getElementById('Accuracy').innerHTML = "校准完成";
-                updateStatus('校准完成', 'ready');
-                swal('校准完成', '已完成校准，但无法计算精度。', 'info');
-            }
+            
+            // 【改进 1】增加一个短暂延迟 (500毫秒)，给WebGazer内部模型足够的时间处理最后一次点击的数据。
+            setTimeout(() => {
+                if (!webgazer || !webgazer.isReady()) {
+                    debug("精度计算失败: WebGazer尚未准备好。");
+                    swal('校准失败', 'WebGazer尚未准备好，请重试。', 'error');
+                    updateStatus('校准失败', 'error');
+                    return;
+                }
+
+                try {
+                    const regression = webgazer.getRegression();
+                    
+                    // 【改进 2】更严格地检查回归模型是否存在。这是最常见的失败点。
+                    if (!regression) {
+                        throw new Error('回归模型未训练。在点击校准点时，是否收集到足够的眼动数据?');
+                    }
+
+                    if (typeof regression.getAccuracy === 'function') {
+                        const accuracy = regression.getAccuracy();
+                        // WebGazer的 getAccuracy() 在失败时可能返回 null 或 NaN。
+                        if (accuracy !== null && typeof accuracy === 'number' && !isNaN(accuracy)) {
+                            const accuracyStr = accuracy.toFixed(0);
+                            document.getElementById('Accuracy').innerHTML = "校准精度: " + accuracyStr + "px";
+                            eyeTrackingData.calibrationData = { points: CalibrationPoints, accuracy: accuracyStr, timestamp: new Date().toISOString(), sessionId, userId };
+                            updateStatus(`校准完成 - 精度: ${accuracyStr}px`, 'ready');
+                            swal('校准完成', `校准精度: ${accuracyStr}px`, 'success');
+                        } else {
+                            throw new Error('getAccuracy() 返回了无效值 (null, NaN, 或非数字)。');
+                        }
+                    } else {
+                        throw new Error('回归模型上没有 getAccuracy 函数。');
+                    }
+                } catch (error) {
+                    debug(`精度计算失败: ${error.message}`);
+                    document.getElementById('Accuracy').innerHTML = "校准完成 (无法计算精度)";
+                    updateStatus('校准完成', 'ready');
+                    
+                    // 【改进 3】向用户提供更详细、更有帮助的反馈。
+                    swal({
+                        title: '校准完成',
+                        text: '已完成校准，但无法计算精度。\n\n这通常是因为在点击校准点时，系统未能有效追踪到您的眼睛。\n\n请确保摄像头视野清晰、光线充足，并在校准过程中尽量保持头部稳定后重试。',
+                        icon: 'info'
+                    });
+                }
+            }, 500); // 500毫秒延迟
         }
         
         function calculatePrecision() {
