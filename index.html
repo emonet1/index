@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 官方校准</title>
+    <title>眼动追踪数据收集系统 - 最终修正版</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -25,7 +25,6 @@
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         const userId = 'index';
         console.log('会话ID:', sessionId);
-        console.log('用户ID:', userId);
 
         async function loadWebGazerScript() {
             const source = 'https://webgazer.cs.brown.edu/webgazer.js';
@@ -49,18 +48,11 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1000; opacity: 0.7; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; opacity: 0.5; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
         .stat-item { margin: 8px 0; display: flex; justify-content: space-between; }
         .stat-value { font-weight: bold; color: #4CAF50; }
-        #debugPanel { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.9); color: #00ff00; padding: 15px; border-radius: 8px; z-index: 2000; max-width: 350px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; display: none; }
-        .test-area { height: 150px; margin: 30px 0; padding: 20px; border-radius: 10px; border: 2px solid #ddd; cursor: pointer; transition: all 0.3s ease; }
-        .test-area:hover { transform: scale(1.02); box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
-        .area-blue { background: linear-gradient(135deg, #74b9ff, #0984e3); color: white; }
-        .area-green { background: linear-gradient(135deg, #00b894, #00a085); color: white; }
-        .area-orange { background: linear-gradient(135deg, #fdcb6e, #e17055); color: white; }
         .controls { text-align: center; margin: 30px 0; }
         .btn { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; margin: 0 10px; font-size: 16px; transition: background 0.3s; }
         .btn:hover { background: #45a049; }
@@ -68,63 +60,51 @@
         .btn.danger:hover { background: #da190b; }
         .btn:disabled { background: #ccc; cursor: not-allowed; }
         .status { position: fixed; top: 20px; left: 20px; padding: 10px 15px; border-radius: 20px; font-weight: bold; z-index: 2000; }
-        .status.ready { background: #4CAF50; color: white; } .status.calibrating { background: #ff9800; color: white; } .status.error { background: #f44336; color: white; } .status.initializing { background: #2196F3; color: white; } .status.loading { background: #9C27B0; color: white; }
+        .status.ready { background: #4CAF50; color: white; } .status.calibrating { background: #ff9800; color: white; } .status.error { background: #f44336; color: white; } .status.initializing { background: #2196F3; color: white; }
         #webgazerVideoContainer { position: fixed !important; top: 10px !important; right: 320px !important; z-index: 1999 !important; width: 240px !important; height: 180px !important; }
         #webgazerVideoFeed, #webgazerFaceOverlay, #webgazerFaceFeedbackBox { border-radius: 8px !important; border: 2px solid #4CAF50 !important; }
-        .Calibration { background-color: red; border: solid 2px #fff; border-radius: 50%; width: 25px; height: 25px; position: fixed; z-index: 100000; cursor: pointer; }
+        .Calibration { background-color: red; border: solid 2px #fff; border-radius: 50%; width: 25px; height: 25px; position: fixed; z-index: 100000; cursor: pointer; opacity: 0.2; }
         #Pt1 { top: 5vh; left: 5vw; } #Pt2 { top: 5vh; left: 50vw; } #Pt3 { top: 5vh; left: 95vw; }
         #Pt4 { top: 50vh; left: 5vw; } #Pt5 { top: 50vh; left: 50vw; } #Pt6 { top: 50vh; left: 95vw; }
         #Pt7 { top: 95vh; left: 5vw; } #Pt8 { top: 95vh; left: 50vw; } #Pt9 { top: 95vh; left: 95vw; }
         #Accuracy { background-color: #222; color: white; padding: 8px; border-radius: 5px; text-align: center; }
-        .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
-        .collection-status.connected { background: #4CAF50; color: white; } .collection-status.disconnected { background: #f44336; color: white; } .collection-status.uploading { background: #ff9800; color: white; }
-        .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
-        .heatmap-visible { opacity: 0.7 !important; visibility: visible !important; }
+        /* 精度测量时的视觉反馈点 */
+        #precisionFixationPoint { position: fixed; width: 15px; height: 15px; background-color: #FFEB3B; border: 2px solid #333; border-radius: 50%; z-index: 100001; pointer-events: none; transform: translate(-50%, -50%); display: none; }
     </style>
 </head>
 <body>
     <div id="status" class="status loading">正在加载库文件...</div>
     <canvas id="plotting_canvas" width="500" height="500"></canvas>
+    <div id="precisionFixationPoint"></div>
 
     <div id="statsPanel">
         <h4 style="margin: 0 0 10px 0; text-align: center; color: #4CAF50;">📊 眼动数据统计</h4>
         <div class="stat-item"><span>会话ID:</span><span id="sessionIdDisplay" class="stat-value" style="font-size: 10px; word-break: break-all;"></span></div>
-        <div class="stat-item"><span>注视点总数:</span><span id="totalGazes" class="stat-value">0</span></div>
-        <div class="stat-item"><span>眼跳次数:</span><span id="saccadeCount" class="stat-value">0</span></div>
-        <div class="stat-item"><span>注视次数:</span><span id="fixationCount" class="stat-value">0</span></div>
-        <div class="stat-item"><span>平均注视时间:</span><span id="avgFixationTime" class="stat-value">0ms</span></div>
         <div class="stat-item"><span>运行时间:</span><span id="runningTime" class="stat-value">0s</span></div>
         <div id="Accuracy">尚未校准</div>
         <div class="stat-item"><span>系统状态:</span><span id="systemStatus" class="stat-value">加载中</span></div>
-        <div class="collection-status disconnected" id="collectionStatus">📈 数据收集: 未开始</div>
-        <div class="firebase-status disconnected" id="firebaseStatus">🔥 Firebase: 未连接</div>
-        <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin: 8px 0 0 0; padding: 6px; font-size: 12px;">🧪 测试连接</button>
-        <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🔥 显示热力图</button>
-        <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🐛 显示调试</button>
     </div>
 
-    <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
-    <div id="heatmapContainer"></div>
     <div class="calibrationDiv">
-        <input type="button" class="Calibration" id="Pt1"></input>
-        <input type="button" class="Calibration" id="Pt2"></input>
-        <input type="button" class="Calibration" id="Pt3"></input>
-        <input type="button" class="Calibration" id="Pt4"></input>
-        <input type="button" class="Calibration" id="Pt5"></input>
-        <input type="button" class="Calibration" id="Pt6"></input>
-        <input type="button" class="Calibration" id="Pt7"></input>
-        <input type="button" class="Calibration" id="Pt8"></input>
-        <input type="button" class="Calibration" id="Pt9"></input>
+        <input type="button" class="Calibration" id="Pt1" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt2" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt3" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt4" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt5" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt6" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt7" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt8" style="display: none;"></input>
+        <input type="button" class="Calibration" id="Pt9" style="display: none;"></input>
     </div>
 
     <div id="content">
-        <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统 - 官方校准版</h1>
+        <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统 - 最终修正版</h1>
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()" disabled>🚀 启动眼动追踪</button>
             <button class="btn" id="calibrateBtn" onclick="Restart()" disabled>🎯 开始/重新校准</button>
             <button class="btn danger" onclick="stopTracking()">⏹️ 停止追踪</button>
         </div>
-        <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">校准完成后，请在页面上<strong style="color: red;">自由点击</strong>以开始测量精度。</p>
+        <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">校准完成后，请在页面上<strong style="color: red;">点击并注视出现的黄点1秒</strong>以测量精度。</p>
         <div class="test-area area-blue"><h2>🌊 区域 A</h2><p>请自然地浏览此区域。</p></div>
         <div class="test-area area-green"><h2>🌿 区域 B</h2><p>系统会记录您的眼动模式。</p></div>
         <div class="test-area area-orange"><h2>🔥 区域 C</h2><p>所有数据将被自动收集。</p></div>
@@ -132,34 +112,33 @@
 
     <script>
         // ===========================================
-        // 全局变量定义
+        // 全局变量
         // ===========================================
-        let heatmapInstance = null, gazeCount = 0, saccadeCount = 0, fixationCount = 0, totalFixationTime = 0;
+        let heatmapInstance = null, gazeCount = 0;
         let startTime = Date.now();
-        let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
-        
-        let eyeTrackingData = { gazePoints: [], saccades: [], fixations: [], calibrationData: { accuracy_percentage: null, timestamp: null } };
-        let lastGazePoint = null;
-        let autoSaveInterval = null, statsUpdateInterval = null;
+        let isTracking = false, webgazerReady = false;
+        let statsUpdateInterval = null;
 
         document.getElementById('sessionIdDisplay').textContent = sessionId;
-
+        
         // ===================================================================================
-        // START: OFFICIAL WEBGAZER DEMO LOGIC (DIRECTLY PORTED)
+        // START: OFFICIAL WEBGAZER DEMO LOGIC (FINAL, CORRECTED VERSION)
         // ===================================================================================
 
         var PointCalibrate = 0;
         var CalibrationPoints = {};
-
-        // Precision measurement variables
-        var precision_measurement = null;
-        var store_points_variable = true;
-        var points_data = [];
         var ClicksPerPoint = 5;
+        var store_points_variable = false;
+        var points_data = [];
+        var precision_measurement = null;
 
         /**
-         * Clears all calibration points and resets the UI.
+         * 延迟函数，这是模拟官方Demo行为的关键
          */
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
         function ClearCalibration() {
             document.querySelectorAll('.Calibration').forEach(i => {
                 i.style.backgroundColor = 'red';
@@ -170,20 +149,12 @@
             PointCalibrate = 0;
         }
 
-        /**
-         * Resets calibration process and starts it. This is the main entry point for calibration.
-         */
         function Restart() {
-            if (!webgazerReady) {
-                swal('错误', '请先启动眼动追踪。', 'error');
-                return;
-            }
-
-            // Unbind precision measurement click listener
+            if (!webgazerReady) return swal('错误', '请先启动眼动追踪。', 'error');
+            
             document.onclick = null;
-            store_points_variable = true;
+            store_points_variable = false;
             points_data = [];
-
             if (precision_measurement) clearInterval(precision_measurement);
             
             webgazer.clearData();
@@ -196,13 +167,11 @@
             }).then(() => {
                 updateStatus('校准进行中', 'calibrating');
                 document.getElementById('Accuracy').innerHTML = "校准中...";
-                // Show the first calibration point
                 document.getElementById('Pt1').style.display = 'block';
                 document.getElementById('Pt1').style.opacity = '1';
             });
         }
         
-        // Attaching click listeners to calibration points using the official for-loop method
         for (let i = 1; i <= 9; i++) {
             document.getElementById("Pt" + i).addEventListener("click", function() {
                 const id = "Pt" + i;
@@ -214,32 +183,38 @@
                     this.setAttribute('disabled', 'disabled');
                     PointCalibrate++;
                 } else if (CalibrationPoints[id] < ClicksPerPoint) {
-                    // Animate the click
-                    let opacity = 0.2 * CalibrationPoints[id] + 0.2;
-                    this.style.opacity = opacity.toString();
+                    this.style.opacity = (0.2 * CalibrationPoints[id] + 0.2).toString();
                 }
 
                 if (PointCalibrate >= 9) {
-                    // All points calibrated
                     ClearCalibration();
                     updateStatus('校准完成', 'ready');
-                    swal('校准完成!', '现在请在屏幕的任意位置点击，系统将开始测量您的注视精度。', 'success');
-                    
-                    // Start precision measurement on click
+                    swal('校准完成!', '现在请在屏幕的任意位置点击，并注视出现的黄点1秒，系统将开始测量您的注视精度。', 'success');
                     store_points_variable = true;
                     document.onclick = store_points;
                 }
             });
         }
-
+        
         /**
-         * Store the user's click and the predicted gaze location for precision calculation.
+         * KEY FIX 1: 精度测量逻辑，包含1秒延迟
+         * This now perfectly mimics the official demo's behavior.
          */
-        function store_points(event) {
+        async function store_points(event) {
             if (!store_points_variable) return;
             
             const x = event.clientX;
             const y = event.clientY;
+
+            // 显示视觉反馈点
+            const fixationPoint = document.getElementById('precisionFixationPoint');
+            fixationPoint.style.left = x + 'px';
+            fixationPoint.style.top = y + 'px';
+            fixationPoint.style.display = 'block';
+
+            // 等待1秒，让用户的注视稳定下来
+            await sleep(1000);
+
             const gazePrediction = webgazer.getCurrentPrediction();
             if (gazePrediction) {
                 points_data.push({
@@ -251,13 +226,15 @@
                     precision_measurement = setInterval(calculatePrecision, 1000);
                 }
             }
+            // 隐藏视觉反馈点
+            fixationPoint.style.display = 'none';
         }
         
-        /**
-         * Periodically calculates and displays the precision percentage.
-         */
         function calculatePrecision() {
-            if (points_data.length < 5) return;
+            if (points_data.length < 5) {
+                document.getElementById('Accuracy').innerHTML = `请继续点击 (${points_data.length}/5)...`;
+                return;
+            };
 
             const thresholds = [100, 200, 300];
             let within_threshold = [0, 0, 0];
@@ -271,43 +248,26 @@
             
             let percentages = within_threshold.map(count => ((count / points_data.length) * 100).toFixed(1));
             
-            const displayText = `精度(<${thresholds[0]}px): ${percentages[0]}%`;
-            document.getElementById('Accuracy').innerHTML = displayText;
-            
-            eyeTrackingData.calibrationData.accuracy_percentage = percentages[0];
-            eyeTrackingData.calibrationData.timestamp = new Date().toISOString();
+            document.getElementById('Accuracy').innerHTML = `精度(<${thresholds[0]}px): ${percentages[0]}%`;
         }
 
         // ===================================================================================
         // END: OFFICIAL WEBGAZER DEMO LOGIC
         // ===================================================================================
 
-        // Helper and application-specific functions
-        function debug(message) { /* ... no changes ... */ }
-        function updateStatus(message, type) { /* ... no changes ... */ }
-        async function testFirebaseConnection() { /* ... no changes ... */ }
-        function processSaccadeAndFixation(gazePoint) { /* ... no changes ... */ }
-        function updateStatsDisplay() { /* ... no changes ... */ }
-        async function saveEyeTrackingData(isManual = false) { /* ... no changes ... */ }
-
-        function gazeDataCallback(data, elapsedTime) {
-            if (!isTracking || !data) return;
-            const gazePoint = { x: data.x, y: data.y, timestamp: new Date().toISOString(), elapsedTime, sessionId, userId };
-            eyeTrackingData.gazePoints.push(gazePoint);
-            if (heatmapInstance) heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
-            gazeCount++;
+        function updateStatus(message, type) {
+            document.getElementById('status').textContent = message;
+            document.getElementById('status').className = `status ${type}`;
+            document.getElementById('systemStatus').textContent = message;
         }
 
         async function initializeSystem() {
             try {
-                if (typeof h337 === 'undefined' || typeof swal === 'undefined') throw new Error('依赖库加载失败');
+                if (typeof swal === 'undefined') throw new Error('SweetAlert加载失败');
                 if (!await loadWebGazerScript() || typeof webgazer === 'undefined') throw new Error('WebGazer加载失败');
-                heatmapInstance = h337.create({ container: document.getElementById('heatmapContainer'), radius: 25, maxOpacity: 0.6, blur: 0.8 });
-                await testFirebaseConnection();
                 updateStatus('系统就绪', 'ready');
                 document.getElementById('startBtn').disabled = false;
-                librariesLoaded = true;
-                ClearCalibration(); // Initially hide calibration points
+                ClearCalibration();
             } catch (error) {
                 updateStatus('初始化失败', 'error');
                 swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
@@ -315,7 +275,6 @@
         }
 
         async function startEyeTracking() {
-            if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
             startBtn.disabled = true;
             updateStatus('初始化WebGazer...', 'initializing');
@@ -325,15 +284,13 @@
                 canvas.height = window.innerHeight;
                 canvas.style.position = 'fixed';
 
-                await webgazer.setGazeListener(gazeDataCallback).begin();
+                await webgazer.setGazeListener((data, elapsedTime) => { if (isTracking && data) gazeCount++; }).begin();
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
                 
                 webgazerReady = true; isTracking = true; startTime = Date.now();
-                if (firebaseConnected) autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 10000);
                 statsUpdateInterval = setInterval(() => {
                     if (isTracking) {
                         document.getElementById('runningTime').textContent = Math.round((Date.now() - startTime) / 1000) + 's';
-                        updateStatsDisplay();
                     }
                 }, 1000);
                 
@@ -354,35 +311,51 @@
             .then((willStop) => { if (willStop) performStop(); });
         }
         
+        /**
+         * KEY FIX 2: 强制关闭摄像头的鲁棒方法
+         * This explicitly gets and stops the camera stream tracks before ending WebGazer.
+         */
         async function performStop() {
-            if (firebaseConnected) await saveEyeTrackingData(true);
-            isTracking = false; webgazerReady = false;
+            if (!webgazerReady) return;
+            isTracking = false;
 
-            if (precision_measurement) clearInterval(precision_measurement);
-            if (autoSaveInterval) clearInterval(autoSaveInterval);
             if (statsUpdateInterval) clearInterval(statsUpdateInterval);
+            if (precision_measurement) clearInterval(precision_measurement);
             
             document.onclick = null;
             store_points_variable = false;
 
-            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
-                // This is the official and correct way to stop WebGazer and release the camera.
+            try {
+                // 1. 暂停WebGazer的数据处理
+                webgazer.pause();
+
+                // 2. 显式获取并停止摄像头媒体流
+                const stream = await webgazer.getVideoElementStream();
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    console.log("摄像头媒体流已强制停止。");
+                }
+                
+                // 3. 调用end()来清理WebGazer的内部状态
                 webgazer.end();
-                debug("WebGazer.end() called. Camera should be off.");
+                console.log("WebGazer实例已结束。");
+                
+            } catch (e) {
+                console.error("关闭WebGazer时出错: ", e);
+                // 备用方案
+                if (webgazer.isReady()) webgazer.end();
             }
 
+            webgazerReady = false;
             ClearCalibration();
             updateStatus('已停止', 'error');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
             document.getElementById('calibrateBtn').disabled = true;
             document.getElementById('Accuracy').innerHTML = "尚未校准";
-            swal('已停止', '眼动追踪已停止，摄像头已关闭。', 'success');
+            swal('已停止', '眼动追踪已停止，摄像头已成功关闭。', 'success');
         }
 
-        function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
-        function toggleHeatmap() { heatmapVisible = !heatmapVisible; document.getElementById('heatmapContainer').classList.toggle('heatmap-visible'); }
-        
         window.addEventListener('load', initializeSystem);
         window.onbeforeunload = (e) => {
             if (isTracking && gazeCount > 0) {
