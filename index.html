@@ -89,11 +89,18 @@
         #webgazerVideoContainer { position: fixed !important; top: 10px !important; right: 320px !important; z-index: 1999 !important; width: 240px !important; height: 180px !important; }
         #webgazerVideoFeed { width: 100% !important; height: 100% !important; border-radius: 8px !important; border: 2px solid #4CAF50 !important; }
         
-        .Calibration { width: 20px !important; height: 20px !important; border-radius: 50% !important; background-color: red !important; border: solid white 3px !important; position: fixed !important; z-index: 100000 !important; cursor: pointer !important; transition: all 0.2s ease !important; opacity: 0.2 !important; }
-        .Calibration:hover { transform: scale(1.5) !important; background-color: yellow !important; box-shadow: 0 0 20px rgba(255, 255, 0, 0.8) !important; }
-        #Pt1 { top: 10% !important; left: 10% !important; } #Pt2 { top: 10% !important; left: 50% !important; margin-left: -10px !important; } #Pt3 { top: 10% !important; right: 10% !important; }
-        #Pt4 { top: 50% !important; margin-top: -10px !important; left: 10% !important; } #Pt5 { top: 50% !important; margin-top: -10px !important; left: 50% !important; margin-left: -10px !important; } #Pt6 { top: 50% !important; margin-top: -10px !important; right: 10% !important; }
-        #Pt7 { bottom: 10% !important; left: 10% !important; } #Pt8 { bottom: 10% !important; left: 50% !important; margin-left: -10px !important; } #Pt9 { bottom: 10% !important; right: 10% !important; }
+        /* MODIFICATION START: Replaced positioning to match other code snippets */
+        .Calibration { width: 20px !important; height: 20px !important; border-radius: 25px !important; background-color: red !important; border-color: black !important; border-style: solid !important; position: fixed !important; z-index: 100000 !important; cursor: pointer !important; opacity: 0.2 !important; }
+        #Pt1{ top: 70px; left:340px; }
+        #Pt2{ top: 70px; left:50vw; margin-left: 340; }
+        #Pt3{ top: 70px; right:2vw; }
+        #Pt4{ top:50vh; left:2vw; }
+        #Pt5{ top: 50vh; left: 50vw; }
+        #Pt6{ top: 50vh; right:2vw; }
+        #Pt7{ bottom:2vw; left: 2vw; }
+        #Pt8{ bottom:2vw; left:50vw; }
+        #Pt9{ bottom:2vw; right:2vw; }
+        /* MODIFICATION END */
 
         #Accuracy { background-color: #222; color: white; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
@@ -472,12 +479,12 @@
         function stop_storing_points_variable() { if (webgazer) webgazer.params.storingPoints = false; }
         function sleep(time) { return new Promise((resolve) => setTimeout(resolve, time)); }
         
+        // MODIFICATION START: Replaced precision calculation functions to match other code snippets
         function calculatePrecision(past50Array) {
             var windowHeight = window.innerHeight;
             var windowWidth = window.innerWidth;
             var x50 = past50Array[0];
             var y50 = past50Array[1];
-            if (!x50 || !y50) return 0; // Handle case where no points were stored
             var staringPointX = windowWidth / 2;
             var staringPointY = windowHeight / 2;
             var precisionPercentages = new Array(50);
@@ -488,7 +495,6 @@
 
         function calculatePrecisionPercentages(precisionPercentages, windowHeight, x50, y50, staringPointX, staringPointY) {
             for (var x = 0; x < 50; x++) {
-                if (x >= x50.length) break;
                 var xDiff = staringPointX - x50[x];
                 var yDiff = staringPointY - y50[x];
                 var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
@@ -507,14 +513,13 @@
 
         function calculateAverage(precisionPercentages) {
             var precision = 0;
-            var actualCount = precisionPercentages.filter(p => typeof p === 'number').length;
-            if(actualCount === 0) return 0;
-            for (var x = 0; x < actualCount; x++) {
+            for (var x = 0; x < 50; x++) {
                 precision += precisionPercentages[x];
             }
-            precision = precision / actualCount;
+            precision = precision / 50;
             return precision;
         }
+        // MODIFICATION END
 
         function Restart() {
             if (!webgazerReady) return;
