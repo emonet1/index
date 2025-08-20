@@ -411,9 +411,7 @@
         function PopUpInstruction() {
             if (!isTracking) return swal('提示', '请先启动眼动追踪。', 'info');
             
-            // MODIFICATION START: Hide stats panel during calibration
             document.getElementById('statsPanel').style.display = 'none';
-            // MODIFICATION END
 
             ClearCanvas();
             swal({
@@ -491,9 +489,7 @@
                         allowOutsideClick: false,
                         buttons: { cancel: "重新校准", confirm: "接受" }
                     }).then(isConfirm => {
-                        // MODIFICATION START: Show stats panel after calibration is done
                         document.getElementById('statsPanel').style.display = 'block';
-                        // MODIFICATION END
                         
                         if (isConfirm) {
                             ClearCanvas();
@@ -646,9 +642,7 @@
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
-                // MODIFICATION START: Hide video preview before ending the session
                 webgazer.showVideoPreview(false);
-                // MODIFICATION END
                 webgazer.end();
             }
 
@@ -656,7 +650,7 @@
             ClearCanvas();
             updateStatus('已停止', 'error');
             document.getElementById('startBtn').disabled = false;
-            document.我在 `performStop` 函数中添加了 `webgazer.showVideoPreview(false);` 这一行，它会在调用 `webgazer.end()` 之前隐藏摄像头预览窗口。`webgazer.end()` 随后会停止数据流并释放摄像头资源。
+            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
             document.getElementById('calibrateBtn').disabled = true;
             swal('已停止', `眼动追踪已停止。`, 'success');
         }
