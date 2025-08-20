@@ -619,10 +619,9 @@
             try {
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
                 
-                // MODIFICATION START: Get and store the camera stream reference using the correct method
-                const videoElement = document.getElementById('webgazerVideoFeed');
-                if (videoElement && videoElement.srcObject) {
-                    cameraStream = videoElement.srcObject;
+                // MODIFICATION START: Get and store the camera stream reference immediately after starting
+                cameraStream = webgazer.getVideoElementStream();
+                if (cameraStream) {
                     debug("摄像头媒体流已获取并保存。");
                 } else {
                     debug("警告：未能获取摄像头媒体流。");
@@ -696,4 +695,4 @@
         });
     </script>
 </body>
-</html>```
+</html>
