@@ -190,6 +190,10 @@
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
         
+        // MODIFICATION START: Add a global variable to hold the camera stream reference
+        let cameraStream = null;
+        // MODIFICATION END
+
         var PointCalibrate = 0;
         var CalibrationPoints = {};
         
@@ -614,6 +618,16 @@
             updateStatus('初始化WebGazer...', 'initializing');
             try {
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
+                
+                // MODIFICATION START: Get and store the camera stream reference immediately after starting
+                cameraStream = webgazer.getVideoElementStream();
+                if (cameraStream) {
+                    debug("摄像头媒体流已获取并保存。");
+                } else {
+                    debug("警告：未能获取摄像头媒体流。");
+                }
+                // MODIFICATION END
+
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
                 isTracking = true; startTime = Date.now(); webgazerReady = true;
                 if (firebaseConnected) startAutoSave();
@@ -641,16 +655,18 @@
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
-            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
-                // MODIFICATION START: Forcefully stop the camera stream
-                const stream = webgazer.getVideoElementStream();
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                    debug("摄像头媒体流已手动停止。");
-                }
-                // MODIFICATION END
+            // MODIFICATION START: Use the globally stored stream reference to stop the camera FIRST
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => {
+                    track.stop();
+                });
+                debug("摄像头媒体流已通过全局引用手动停止。");
+                cameraStream = null; // Clear the reference after stopping
+            }
+            // MODIFICATION END
 
-                webgazer.showVideoPreview(false);
+            // Now, tell WebGazer to clean up its own resources
+            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
             }
 
