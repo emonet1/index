@@ -87,7 +87,6 @@
         .status.initializing { background: #2196F3; color: white; }
         .status.loading { background: #9C27B0; color: white; }
         
-        /* MODIFICATION START: Changed camera position to match original code */
         #webgazerVideoContainer {
             display: block !important; 
             position: fixed !important;
@@ -97,9 +96,7 @@
             height: 240px !important;
             z-index: 1;
         }
-        /* MODIFICATION END */
         
-        /* MODIFICATION START: Replaced positioning to match original code snippets */
         .Calibration {
             width: 20px;
             height: 20px;
@@ -122,7 +119,6 @@
         #Pt7{ bottom:2vw; left: 2vw; }
         #Pt8{ bottom:2vw; left:50vw; }
         #Pt9{ bottom:2vw; right:2vw; }
-        /* MODIFICATION END */
 
         #Accuracy { background-color: #222; color: white; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
@@ -158,7 +154,6 @@
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
     <div id="heatmapContainer"></div>
     
-    <!-- MODIFICATION START: Changed div to input -->
     <div class="calibrationDiv">
         <input type="button" class="Calibration" id="Pt1">
         <input type="button" class="Calibration" id="Pt2">
@@ -170,7 +165,6 @@
         <input type="button" class="Calibration" id="Pt8">
         <input type="button" class="Calibration" id="Pt9">
     </div>
-    <!-- MODIFICATION END -->
 
     <div id="content">
         <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统 - 官方校准+精度测试版</h1>
@@ -416,6 +410,11 @@
         
         function PopUpInstruction() {
             if (!isTracking) return swal('提示', '请先启动眼动追踪。', 'info');
+            
+            // MODIFICATION START: Hide stats panel during calibration
+            document.getElementById('statsPanel').style.display = 'none';
+            // MODIFICATION END
+
             ClearCanvas();
             swal({
                 title:"校准说明",
@@ -425,7 +424,6 @@
                 updateStatus('校准进行中', 'calibrating');
                 debug('开始9点校准流程');
                 ShowCalibrationPoint();
-                // Re-bind click events every time calibration starts
                 document.querySelectorAll('.Calibration').forEach((i) => {
                     i.onclick = () => calPointClick(i);
                 });
@@ -449,9 +447,7 @@
 
             if (CalibrationPoints[id] == 5) {
                 node.style.backgroundColor = 'yellow';
-                // MODIFICATION START: Use setAttribute for <input> elements
                 node.setAttribute('disabled', 'disabled');
-                // MODIFICATION END
                 PointCalibrate++;
             }
             
@@ -495,6 +491,10 @@
                         allowOutsideClick: false,
                         buttons: { cancel: "重新校准", confirm: "接受" }
                     }).then(isConfirm => {
+                        // MODIFICATION START: Show stats panel after calibration is done
+                        document.getElementById('statsPanel').style.display = 'block';
+                        // MODIFICATION END
+                        
                         if (isConfirm) {
                             ClearCanvas();
                             updateStatus('运行中', 'ready');
@@ -512,7 +512,6 @@
         function stop_storing_points_variable() { if (webgazer) webgazer.params.storingPoints = false; }
         function sleep(time) { return new Promise((resolve) => setTimeout(resolve, time)); }
         
-        // MODIFICATION START: Replaced precision calculation functions to match other code snippets
         function calculatePrecision(past50Array) {
           var windowHeight = window.innerHeight;
           var windowWidth = window.innerWidth;
@@ -552,7 +551,6 @@
           precision = precision / 50;
           return precision;
         }
-        // MODIFICATION END
 
         function Restart() {
             if (!webgazerReady) return;
@@ -568,9 +566,7 @@
             document.querySelectorAll('.Calibration').forEach((i) => {
                 i.style.backgroundColor = 'red';
                 i.style.opacity = '0.2';
-                // MODIFICATION START: Use removeAttribute for <input> elements
                 i.removeAttribute('disabled');
-                // MODIFICATION END
             });
             CalibrationPoints = {};
             PointCalibrate = 0;
@@ -608,7 +604,7 @@
                 updateStatus('系统就绪', 'ready');
                 document.getElementById('startBtn').disabled = false;
                 librariesLoaded = true;
-                ClearCanvas(); // Ensure calibration points are hidden on start
+                ClearCanvas();
             } catch (error) {
                 updateStatus('初始化失败', 'error');
                 swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
@@ -648,12 +644,19 @@
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
-            if (typeof webgazer !== 'undefined' && webgazer.isReady()) webgazer.end();
+            
+            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                // MODIFICATION START: Hide video preview before ending the session
+                webgazer.showVideoPreview(false);
+                // MODIFICATION END
+                webgazer.end();
+            }
+
             ClearCalibration();
             ClearCanvas();
             updateStatus('已停止', 'error');
             document.getElementById('startBtn').disabled = false;
-            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
+            document.我在 `performStop` 函数中添加了 `webgazer.showVideoPreview(false);` 这一行，它会在调用 `webgazer.end()` 之前隐藏摄像头预览窗口。`webgazer.end()` 随后会停止数据流并释放摄像头资源。
             document.getElementById('calibrateBtn').disabled = true;
             swal('已停止', `眼动追踪已停止。`, 'success');
         }
