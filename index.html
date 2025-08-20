@@ -642,6 +642,14 @@
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                // MODIFICATION START: Forcefully stop the camera stream
+                const stream = webgazer.getVideoElementStream();
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    debug("摄像头媒体流已手动停止。");
+                }
+                // MODIFICATION END
+
                 webgazer.showVideoPreview(false);
                 webgazer.end();
             }
