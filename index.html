@@ -314,30 +314,41 @@
         }
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
-
+        
+        // [已修正] 最终版的截图函数
         async function captureHeatmapSnapshot() {
+            const heatmapContainer = document.getElementById('heatmapContainer');
+            if (!heatmapContainer) {
+                debug('无法找到热力图容器');
+                return;
+            }
+
+            // 保存原始样式以便后续恢复
+            const wasVisible = heatmapContainer.classList.contains('heatmap-visible');
+            const originalOpacity = heatmapContainer.style.opacity;
+            const originalPointerEvents = heatmapContainer.style.pointerEvents;
+            
             try {
-                const heatmapContainer = document.getElementById('heatmapContainer');
-                
-                const wasVisible = heatmapContainer.classList.contains('heatmap-visible');
-                const originalOpacity = heatmapContainer.style.opacity;
+                // 1. 强制让热力图容器对截图工具可见
                 heatmapContainer.classList.add('heatmap-visible');
-                heatmapContainer.style.opacity = '0.7';
+                heatmapContainer.style.opacity = '0.7'; // 确保有可见的透明度
+                
+                // [关键修改 1] 暂时移除 pointer-events: none 样式，让 html2canvas 可以捕获它
+                heatmapContainer.style.pointerEvents = 'auto';
 
-                debug('正在使用 html2canvas 生成页面快照...');
+                // [关键修改 2] 增加一个短暂的延迟 (100毫秒)，以确保浏览器有时间渲染热力图 canvas
+                await new Promise(resolve => setTimeout(resolve, 100)); 
 
+                debug('正在使用 html2canvas 生成合并快照...');
+                
                 const canvas = await html2canvas(document.body, {
                     useCORS: true,
                     logging: false
                 });
-
-                heatmapContainer.style.opacity = originalOpacity;
-                if (!wasVisible) {
-                    heatmapContainer.classList.remove('heatmap-visible');
-                }
                 
                 const imageDataUrl = canvas.toDataURL('image/png', 0.8);
                 
+                // ... 后续上传逻辑不变 ...
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -363,8 +374,16 @@
             } catch (error) {
                 console.error("捕获或上传合并的热力图快照时出错: ", error);
                 debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
+            } finally {
+                // 3. 无论成功与否，都恢复热力图容器的原始样式，确保不影响用户界面
+                heatmapContainer.style.opacity = originalOpacity;
+                heatmapContainer.style.pointerEvents = originalPointerEvents;
+                if (!wasVisible) {
+                    heatmapContainer.classList.remove('heatmap-visible');
+                }
             }
         }
+
 
         function startAutoSave() {
             if (autoSaveInterval) clearInterval(autoSaveInterval);
@@ -614,14 +633,12 @@
             }
         }
 
-        // [已修正] 启动逻辑回归到最简单、最稳定的原始版本
         async function startEyeTracking() {
             if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
             startBtn.disabled = true;
             updateStatus('初始化WebGazer...', 'initializing');
             try {
-                // 标准的启动流程，不做任何额外操作
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
                 
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
@@ -647,13 +664,11 @@
             .then((willStop) => { if (willStop) performStop(); });
         }
         
-        // [已修正] 停止逻辑回归到最简单、最稳定的原始版本
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
-            // 完全依赖 webgazer.end() 来停止所有内容，包括摄像头
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
                 debug("WebGazer.end() 已调用，停止追踪。");
