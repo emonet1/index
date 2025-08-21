@@ -59,7 +59,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1000; opacity: 0.7; visibility: hidden; }
+        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; opacity: 0.7; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
@@ -191,8 +191,6 @@
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
         
-        // [已移除] 删除了不稳定的 cameraStream 全局变量
-
         var PointCalibrate = 0;
         var CalibrationPoints = {};
         
@@ -616,16 +614,15 @@
             }
         }
 
-        // [已修正] 移除了所有手动获取摄像头流的错误代码，回归到标准流程
+        // [已修正] 启动逻辑回归到最简单、最稳定的原始版本
         async function startEyeTracking() {
             if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
             startBtn.disabled = true;
             updateStatus('初始化WebGazer...', 'initializing');
             try {
+                // 标准的启动流程，不做任何额外操作
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
-                
-                // [已移除] 删除了所有 videoElement 和 cameraStream 的相关代码
                 
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
                 isTracking = true; startTime = Date.now(); webgazerReady = true;
@@ -637,7 +634,7 @@
                 startBtn.textContent = '✅ 运行中';
                 swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
             } catch (error) {
-                console.error("启动眼动追踪失败:", error); // 添加更详细的控制台错误输出
+                console.error("启动眼动追踪失败:", error);
                 updateStatus('启动失败', 'error');
                 startBtn.disabled = false;
                 swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
@@ -650,13 +647,13 @@
             .then((willStop) => { if (willStop) performStop(); });
         }
         
-        // [已修正] 停止逻辑同样回归到标准流程，只调用 webgazer.end()
+        // [已修正] 停止逻辑回归到最简单、最稳定的原始版本
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
-            // 完全依赖 webgazer.end() 来停止摄像头和所有追踪
+            // 完全依赖 webgazer.end() 来停止所有内容，包括摄像头
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
                 debug("WebGazer.end() 已调用，停止追踪。");
@@ -687,4 +684,4 @@
         });
     </script>
 </body>
-</html>```
+</html>
