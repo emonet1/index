@@ -610,43 +610,52 @@
             }
         }
 
+        // --- [最终修正] START ---
         async function startEyeTracking() {
             if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
             startBtn.disabled = true;
             updateStatus('初始化WebGazer...', 'initializing');
             try {
+                // 启动 WebGazer
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
+                
+                // 显示视频预览和预测点
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
                 
-                // --- 代码修正处 START ---
-                // 使用延时和查询来稳定地获取由WebGazer创建的video元素
+                // [正确逻辑] 使用延时查询来稳定地获取由 WebGazer 创建的 video 元素
+                // 这是为了在后续停止追踪时能可靠地关闭摄像头
                 setTimeout(() => {
                     const videoElement = document.querySelector('#webgazerVideoContainer > video');
                     if (videoElement && videoElement.srcObject) {
-                        cameraStream = videoElement.srcObject;
-                        debug("摄像头媒体流已从video元素获取并保存。");
+                        cameraStream = videoElement.srcObject; // 获取媒体流并存入全局变量
+                        debug("摄像头媒体流已成功获取并保存。");
                     } else {
-                        debug("警告：未能从video元素获取摄像头媒体流。将在停止时再次尝试。");
+                        debug("警告：未能获取摄像头媒体流。关闭时将再次尝试。");
                     }
-                }, 1000); // 延迟1秒确保video元素已完全渲染
-                // --- 代码修正处 END ---
+                }, 1500); // 给予 1.5 秒的充足时间确保 video 元素已完全初始化
 
-                isTracking = true; startTime = Date.now(); webgazerReady = true;
+                // 更新系统状态和UI
+                isTracking = true; 
+                startTime = Date.now(); 
+                webgazerReady = true;
                 if (firebaseConnected) startAutoSave();
-                startHeatmapSnapshots(); startStatsUpdate();
+                startHeatmapSnapshots(); 
+                startStatsUpdate();
                 
                 updateStatus('运行中', 'ready');
                 document.getElementById('calibrateBtn').disabled = false;
                 startBtn.textContent = '✅ 运行中';
                 swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
+
             } catch (error) {
-                console.error(error); // 在控制台打印完整错误对象
+                console.error("WebGazer启动失败:", error); // 在控制台打印完整错误对象
                 updateStatus('启动失败', 'error');
                 startBtn.disabled = false;
-                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
+                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限，并确保没有其他程序占用摄像头。\n\n错误详情: ${error.message}`, 'error');
             }
         }
+        // --- [最终修正] END ---
 
         function stopTracking() {
             if (!isTracking) return;
@@ -660,26 +669,29 @@
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
             // 停止摄像头的逻辑
-            if (cameraStream) {
+            if (cameraStream && typeof cameraStream.getTracks === 'function') {
                 cameraStream.getTracks().forEach(track => {
                     track.stop();
                 });
                 debug("摄像头媒体流已通过全局引用手动停止。");
                 cameraStream = null; // 清理引用
             } else {
-                // 如果启动时没获取到，在这里再次尝试
+                // 如果启动时没获取到，在这里再次尝试作为备用方案
+                debug("全局摄像头引用不存在，尝试从DOM元素关闭。");
                 const videoElement = document.querySelector('#webgazerVideoContainer > video');
-                if (videoElement && videoElement.srcObject) {
+                if (videoElement && videoElement.srcObject && typeof videoElement.srcObject.getTracks === 'function') {
                     videoElement.srcObject.getTracks().forEach(track => track.stop());
-                    debug("摄像头媒体流在停止时获取并关闭。");
+                    debug("摄像头媒体流在停止时从DOM元素获取并关闭。");
                 }
             }
 
             // 调用 WebGazer 的清理方法
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
+                debug("WebGazer已停止。");
             }
 
+            // 清理UI和状态
             ClearCalibration();
             ClearCanvas();
             updateStatus('已停止', 'error');
