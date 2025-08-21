@@ -56,6 +56,8 @@
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.0/heatmap.min.js"></script>
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
+    <!-- [新增] 引入 html2canvas 库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
         #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1000; opacity: 0.7; visibility: hidden; }
@@ -318,48 +320,63 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
 
+        // [已修改] 使用 html2canvas 替换旧的截图逻辑
         async function captureHeatmapSnapshot() {
             try {
-                const canvas = document.getElementById('heatmapContainer').querySelector('canvas');
-                if (!canvas) {
-                    debug('无法捕获热力图快照：Canvas未找到。');
-                    return;
+                // 1. 获取热力图容器元素
+                const heatmapContainer = document.getElementById('heatmapContainer');
+                
+                // 2. 为了确保截图清晰，我们先强制显示热力图
+                //    并暂时将其设为可见的透明度
+                const wasVisible = heatmapContainer.classList.contains('heatmap-visible');
+                const originalOpacity = heatmapContainer.style.opacity;
+                heatmapContainer.classList.add('heatmap-visible');
+                heatmapContainer.style.opacity = '0.7';
+
+                debug('正在使用 html2canvas 生成页面快照...');
+
+                // 3. 使用 html2canvas 对整个 <body> 元素进行截图
+                //    它会返回一个包含最终图像的 canvas 元素
+                const canvas = await html2canvas(document.body, {
+                    useCORS: true, // 如果页面中有跨域图片，需要这个选项
+                    logging: false // 可以在调试时设为 true 来查看日志
+                });
+
+                // 4. 将截图后恢复热力图之前的可见性和透明度状态
+                heatmapContainer.style.opacity = originalOpacity;
+                if (!wasVisible) {
+                    heatmapContainer.classList.remove('heatmap-visible');
                 }
                 
-                heatmapInstance.repaint();
+                // 5. 从 html2canvas 生成的 canvas 中获取图像数据
+                const imageDataUrl = canvas.toDataURL('image/png', 0.8);
+                
+                // --- 后续的上传逻辑保持不变 ---
+                const cloudName = 'ddp3tohxk';
+                const uploadPreset = 'index1';
+                const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+                const formData = new FormData();
+                formData.append('file', imageDataUrl);
+                formData.append('upload_preset', uploadPreset);
+                formData.append('folder', `heatmaps/${userId}/${sessionId}`);
+                debug(`开始上传合并后的热力图到 Cloudinary...`);
+                
+                const response = await fetch(url, { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Cloudinary上传失败: ${errorData.error.message}`);
+                }
+                const data = await response.json();
+                const secureUrl = data.secure_url;
+                debug(`合并热力图上传成功: ${secureUrl}`);
 
-                setTimeout(async () => {
-                    try {
-                        const imageDataUrl = canvas.toDataURL('image/png', 0.8);
-                        const cloudName = 'ddp3tohxk';
-                        const uploadPreset = 'index1';
-                        const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
-                        const formData = new FormData();
-                        formData.append('file', imageDataUrl);
-                        formData.append('upload_preset', uploadPreset);
-                        formData.append('folder', `heatmaps/${userId}/${sessionId}`);
-                        debug(`开始上传热力图到 Cloudinary...`);
-                        
-                        const response = await fetch(url, { method: 'POST', body: formData });
-                        if (!response.ok) {
-                            const errorData = await response.json();
-                            throw new Error(`Cloudinary上传失败: ${errorData.error.message}`);
-                        }
-                        const data = await response.json();
-                        const secureUrl = data.secure_url;
-                        debug(`热力图上传成功: ${secureUrl}`);
+                eyeTrackingData.heatmapSnapshots.push({ timestamp: new Date().toISOString(), storageUrl: secureUrl, provider: 'cloudinary', sessionId, userId });
+                heatmapSnapshotCount++;
+                updateStatsDisplay();
 
-                        eyeTrackingData.heatmapSnapshots.push({ timestamp: new Date().toISOString(), storageUrl: secureUrl, provider: 'cloudinary', sessionId, userId });
-                        heatmapSnapshotCount++;
-                        updateStatsDisplay();
-                    } catch (e) {
-                        console.error("热力图上传或快照失败: ", e);
-                        debug(`热力图上传或快照失败: ${e.message}`);
-                    }
-                }, 150);
             } catch (error) {
-                console.error("捕获热力图快照时出错: ", error);
-                debug(`捕获热力图快照时出错: ${error.message}`);
+                console.error("捕获或上传合并的热力图快照时出错: ", error);
+                debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
             }
         }
 
