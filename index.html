@@ -59,7 +59,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; opacity: 0.7; visibility: hidden; }
+        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; /* 确保热力图在最上层 */ visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
@@ -125,7 +125,7 @@
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status.connected { background: #4CAF50; color: white; } .collection-status.disconnected { background: #f44336; color: white; } .collection-status.uploading { background: #ff9800; color: white; }
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
-        .heatmap-visible { opacity: 0.7 !important; visibility: visible !important; }
+        .heatmap-visible { visibility: visible !important; }
     </style>
 </head>
 <body>
@@ -148,7 +148,7 @@
         <div class="firebase-status disconnected" id="firebaseStatus">🔥 Firebase: 未连接</div>
         <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin: 8px 0 0 0; padding: 6px; font-size: 12px;">🧪 测试连接</button>
         <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">💾 强制保存</button>
-        <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🔥 显示热力图</button>
+        <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🔥 显示/隐藏热力图</button>
         <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🐛 显示调试</button>
     </div>
 
@@ -189,7 +189,7 @@
         // ===========================================
         let heatmapInstance = null, gazeCount = 0, snapshotCount = 0, heatmapSnapshotCount = 0, saccadeCount = 0, fixationCount = 0, totalFixationTime = 0;
         let startTime = Date.now();
-        let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
+        let isTracking = false, webgazerReady = false, debugMode = false, librariesLoaded = false, firebaseConnected = false;
         
         var PointCalibrate = 0;
         var CalibrationPoints = {};
@@ -315,36 +315,41 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
         
-        // [已修正] 采用分步手动合成的最终截图方案
+        // [已修正] 采用分步手动合成的最终截图方案，确保无闪烁
         async function captureHeatmapSnapshot() {
             const heatmapContainer = document.getElementById('heatmapContainer');
+            
+            // 保存热力图容器的原始可见状态，通常是 'hidden'
             const originalVisibility = heatmapContainer.style.visibility;
 
             try {
-                // 1. 先截取不包含热力图的背景页面
-                //    为了确保背景干净，先将热力图容器设为不可见
+                // 1. 强制隐藏热力图容器，以截取干净的背景
                 heatmapContainer.style.visibility = 'hidden';
-                debug('正在截取背景页面...');
+                debug('正在截取背景页面 (用户所见)...');
+                
+                // 2. 截取用户看到的、不包含热力图的页面
                 const backgroundCanvas = await html2canvas(document.body, {
                     useCORS: true,
-                    logging: false
+                    logging: false,
+                    // 忽略我们正在操作的元素，避免潜在的渲染冲突
+                    ignoreElements: (element) => element.id === 'heatmapContainer'
                 });
 
-                // 2. 获取 heatmap.js 自己创建的 canvas
+                // 3. 从（被隐藏的）容器中获取热力图canvas
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
                 if (!heatmapCanvas) {
                     throw new Error('无法找到 heatmap.js 的 canvas 元素！');
                 }
 
-                // 3. 将热力图 canvas 绘制到背景截图 canvas 之上
-                debug('正在合并热力图与背景...');
+                // 4. 在代码中，将热力图绘制到背景截图之上（离屏合成）
+                debug('正在后台合成热力图与背景...');
                 const context = backgroundCanvas.getContext('2d');
                 context.drawImage(heatmapCanvas, 0, 0);
 
-                // 4. 从合并后的 canvas 生成最终的图像数据
+                // 5. 从合并后的canvas生成最终图像
                 const imageDataUrl = backgroundCanvas.toDataURL('image/png', 0.8);
                 
-                // 5. 上传逻辑...
+                // 6. 上传逻辑...
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -352,7 +357,6 @@
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
                 formData.append('folder', `heatmaps/${userId}/${sessionId}`);
-                debug(`开始上传合并后的热力图到 Cloudinary...`);
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
                 if (!response.ok) {
@@ -371,7 +375,7 @@
                 console.error("捕获或上传合并的热力图快照时出错: ", error);
                 debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
             } finally {
-                // 6. 无论如何，恢复热力图容器的原始可见性
+                // 7. 无论成功与否，都将热力图容器恢复到其原始状态
                 heatmapContainer.style.visibility = originalVisibility;
             }
         }
@@ -591,7 +595,19 @@
         // =======================================================================
 
         function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
-        function toggleHeatmap() { heatmapVisible = !heatmapVisible; document.getElementById('heatmapContainer').classList.toggle('heatmap-visible'); }
+        
+        // "显示/隐藏热力图"按钮的逻辑
+        function toggleHeatmap() { 
+            const heatmapContainer = document.getElementById('heatmapContainer');
+            // 使用 classList.toggle 来切换 .heatmap-visible 类
+            heatmapContainer.classList.toggle('heatmap-visible');
+            // 根据是否存在这个类来更新 style.visibility
+            if (heatmapContainer.classList.contains('heatmap-visible')) {
+                heatmapContainer.style.visibility = 'visible';
+            } else {
+                heatmapContainer.style.visibility = 'hidden';
+            }
+        }
         
         function startStatsUpdate() {
             if (statsUpdateInterval) clearInterval(statsUpdateInterval);
@@ -691,4 +707,4 @@
         });
     </script>
 </body>
-</html>
+</html>```
