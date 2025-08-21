@@ -56,7 +56,6 @@
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.0/heatmap.min.js"></script>
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
-    <!-- [新增] 引入 html2canvas 库 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
@@ -192,9 +191,8 @@
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
         
-        // MODIFICATION START: Add a global variable to hold the camera stream reference
+        // 用于存储摄像头媒体流的全局变量
         let cameraStream = null;
-        // MODIFICATION END
 
         var PointCalibrate = 0;
         var CalibrationPoints = {};
@@ -320,14 +318,10 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
 
-        // [已修改] 使用 html2canvas 替换旧的截图逻辑
         async function captureHeatmapSnapshot() {
             try {
-                // 1. 获取热力图容器元素
                 const heatmapContainer = document.getElementById('heatmapContainer');
                 
-                // 2. 为了确保截图清晰，我们先强制显示热力图
-                //    并暂时将其设为可见的透明度
                 const wasVisible = heatmapContainer.classList.contains('heatmap-visible');
                 const originalOpacity = heatmapContainer.style.opacity;
                 heatmapContainer.classList.add('heatmap-visible');
@@ -335,23 +329,18 @@
 
                 debug('正在使用 html2canvas 生成页面快照...');
 
-                // 3. 使用 html2canvas 对整个 <body> 元素进行截图
-                //    它会返回一个包含最终图像的 canvas 元素
                 const canvas = await html2canvas(document.body, {
-                    useCORS: true, // 如果页面中有跨域图片，需要这个选项
-                    logging: false // 可以在调试时设为 true 来查看日志
+                    useCORS: true,
+                    logging: false
                 });
 
-                // 4. 将截图后恢复热力图之前的可见性和透明度状态
                 heatmapContainer.style.opacity = originalOpacity;
                 if (!wasVisible) {
                     heatmapContainer.classList.remove('heatmap-visible');
                 }
                 
-                // 5. 从 html2canvas 生成的 canvas 中获取图像数据
                 const imageDataUrl = canvas.toDataURL('image/png', 0.8);
                 
-                // --- 后续的上传逻辑保持不变 ---
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -628,6 +617,7 @@
             }
         }
 
+        // [已修改] 修正获取摄像头数据流的方法
         async function startEyeTracking() {
             if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
@@ -636,14 +626,14 @@
             try {
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
                 
-                // MODIFICATION START: Get and store the camera stream reference immediately after starting
-                cameraStream = webgazer.getVideoElementStream();
-                if (cameraStream) {
+                // [修正] 使用正确的方法获取摄像头媒体流
+                const videoElement = webgazer.getVideoElement();
+                if (videoElement && videoElement.srcObject) {
+                    cameraStream = videoElement.srcObject;
                     debug("摄像头媒体流已获取并保存。");
                 } else {
                     debug("警告：未能获取摄像头媒体流。");
                 }
-                // MODIFICATION END
 
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
                 isTracking = true; startTime = Date.now(); webgazerReady = true;
@@ -667,22 +657,22 @@
             .then((willStop) => { if (willStop) performStop(); });
         }
 
+        // [已修改] 确保停止逻辑与新的启动逻辑一致
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
-            // MODIFICATION START: Use the globally stored stream reference to stop the camera FIRST
+            // 首先，使用我们保存的 stream 引用来手动停止摄像头
             if (cameraStream) {
                 cameraStream.getTracks().forEach(track => {
                     track.stop();
                 });
                 debug("摄像头媒体流已通过全局引用手动停止。");
-                cameraStream = null; // Clear the reference after stopping
+                cameraStream = null; // 停止后清除引用
             }
-            // MODIFICATION END
 
-            // Now, tell WebGazer to clean up its own resources
+            // 然后，再让 WebGazer 清理它自己的资源
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
             }
