@@ -315,40 +315,36 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
         
-        // [已修正] 最终版的截图函数
+        // [已修正] 采用分步手动合成的最终截图方案
         async function captureHeatmapSnapshot() {
             const heatmapContainer = document.getElementById('heatmapContainer');
-            if (!heatmapContainer) {
-                debug('无法找到热力图容器');
-                return;
-            }
+            const originalVisibility = heatmapContainer.style.visibility;
 
-            // 保存原始样式以便后续恢复
-            const wasVisible = heatmapContainer.classList.contains('heatmap-visible');
-            const originalOpacity = heatmapContainer.style.opacity;
-            const originalPointerEvents = heatmapContainer.style.pointerEvents;
-            
             try {
-                // 1. 强制让热力图容器对截图工具可见
-                heatmapContainer.classList.add('heatmap-visible');
-                heatmapContainer.style.opacity = '0.7'; // 确保有可见的透明度
-                
-                // [关键修改 1] 暂时移除 pointer-events: none 样式，让 html2canvas 可以捕获它
-                heatmapContainer.style.pointerEvents = 'auto';
-
-                // [关键修改 2] 增加一个短暂的延迟 (100毫秒)，以确保浏览器有时间渲染热力图 canvas
-                await new Promise(resolve => setTimeout(resolve, 100)); 
-
-                debug('正在使用 html2canvas 生成合并快照...');
-                
-                const canvas = await html2canvas(document.body, {
+                // 1. 先截取不包含热力图的背景页面
+                //    为了确保背景干净，先将热力图容器设为不可见
+                heatmapContainer.style.visibility = 'hidden';
+                debug('正在截取背景页面...');
+                const backgroundCanvas = await html2canvas(document.body, {
                     useCORS: true,
                     logging: false
                 });
+
+                // 2. 获取 heatmap.js 自己创建的 canvas
+                const heatmapCanvas = heatmapContainer.querySelector('canvas');
+                if (!heatmapCanvas) {
+                    throw new Error('无法找到 heatmap.js 的 canvas 元素！');
+                }
+
+                // 3. 将热力图 canvas 绘制到背景截图 canvas 之上
+                debug('正在合并热力图与背景...');
+                const context = backgroundCanvas.getContext('2d');
+                context.drawImage(heatmapCanvas, 0, 0);
+
+                // 4. 从合并后的 canvas 生成最终的图像数据
+                const imageDataUrl = backgroundCanvas.toDataURL('image/png', 0.8);
                 
-                const imageDataUrl = canvas.toDataURL('image/png', 0.8);
-                
-                // ... 后续上传逻辑不变 ...
+                // 5. 上传逻辑...
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -375,12 +371,8 @@
                 console.error("捕获或上传合并的热力图快照时出错: ", error);
                 debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
             } finally {
-                // 3. 无论成功与否，都恢复热力图容器的原始样式，确保不影响用户界面
-                heatmapContainer.style.opacity = originalOpacity;
-                heatmapContainer.style.pointerEvents = originalPointerEvents;
-                if (!wasVisible) {
-                    heatmapContainer.classList.remove('heatmap-visible');
-                }
+                // 6. 无论如何，恢复热力图容器的原始可见性
+                heatmapContainer.style.visibility = originalVisibility;
             }
         }
 
