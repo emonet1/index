@@ -58,21 +58,7 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        
-        /* --- 代码修改处 START --- */
-        #heatmapContainer { 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            pointer-events: none; 
-            z-index: 999; /* <-- [关键修改] 将 z-index 从 -1000 改为 999，使其覆盖在内容之上 */
-            opacity: 0.7; 
-            visibility: hidden; 
-        }
-        /* --- 代码修改处 END --- */
-
+        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 999; opacity: 0.7; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
@@ -204,9 +190,8 @@
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, heatmapVisible = false, librariesLoaded = false, firebaseConnected = false;
         
-        // MODIFICATION START: Add a global variable to hold the camera stream reference
+        // 用于存储摄像头媒体流的全局变量
         let cameraStream = null;
-        // MODIFICATION END
 
         var PointCalibrate = 0;
         var CalibrationPoints = {};
@@ -632,17 +617,21 @@
             updateStatus('初始化WebGazer...', 'initializing');
             try {
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
-                
-                // MODIFICATION START: Get and store the camera stream reference immediately after starting
-                cameraStream = webgazer.getVideoElementStream();
-                if (cameraStream) {
-                    debug("摄像头媒体流已获取并保存。");
-                } else {
-                    debug("警告：未能获取摄像头媒体流。");
-                }
-                // MODIFICATION END
-
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
+                
+                // --- 代码修正处 START ---
+                // 使用延时和查询来稳定地获取由WebGazer创建的video元素
+                setTimeout(() => {
+                    const videoElement = document.querySelector('#webgazerVideoContainer > video');
+                    if (videoElement && videoElement.srcObject) {
+                        cameraStream = videoElement.srcObject;
+                        debug("摄像头媒体流已从video元素获取并保存。");
+                    } else {
+                        debug("警告：未能从video元素获取摄像头媒体流。将在停止时再次尝试。");
+                    }
+                }, 1000); // 延迟1秒确保video元素已完全渲染
+                // --- 代码修正处 END ---
+
                 isTracking = true; startTime = Date.now(); webgazerReady = true;
                 if (firebaseConnected) startAutoSave();
                 startHeatmapSnapshots(); startStatsUpdate();
@@ -652,6 +641,7 @@
                 startBtn.textContent = '✅ 运行中';
                 swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
             } catch (error) {
+                console.error(error); // 在控制台打印完整错误对象
                 updateStatus('启动失败', 'error');
                 startBtn.disabled = false;
                 swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
@@ -669,17 +659,23 @@
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
             
-            // MODIFICATION START: Use the globally stored stream reference to stop the camera FIRST
+            // 停止摄像头的逻辑
             if (cameraStream) {
                 cameraStream.getTracks().forEach(track => {
                     track.stop();
                 });
                 debug("摄像头媒体流已通过全局引用手动停止。");
-                cameraStream = null; // Clear the reference after stopping
+                cameraStream = null; // 清理引用
+            } else {
+                // 如果启动时没获取到，在这里再次尝试
+                const videoElement = document.querySelector('#webgazerVideoContainer > video');
+                if (videoElement && videoElement.srcObject) {
+                    videoElement.srcObject.getTracks().forEach(track => track.stop());
+                    debug("摄像头媒体流在停止时获取并关闭。");
+                }
             }
-            // MODIFICATION END
 
-            // Now, tell WebGazer to clean up its own resources
+            // 调用 WebGazer 的清理方法
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
             }
