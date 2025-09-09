@@ -68,48 +68,38 @@
             overflow: hidden;
             font-family: Arial, sans-serif;
             background: #f0f0f0;
-            
-            /* 关键 #1: 将body作为主flex容器 */
             display: flex;
             flex-direction: column;
-            align-items: center; /* 水平居中 #content */
+            align-items: center;
         }
         
         #content {
             width: 100%;
             max-width: 900px;
-            
-            /* 关键 #2: 让 #content 填满父容器(body)的所有空间 */
             flex: 1; 
-            min-height: 0; /* 安全措施 */
-
-            /* 关键 #3: #content 自身也成为一个flex容器 */
+            min-height: 0;
             display: flex;
             flex-direction: column;
-            
             padding: 20px;
             box-sizing: border-box;
             background: white;
         }
         
         .controls {
-            flex-shrink: 0; /* 防止按钮区域被压缩 */
+            flex-shrink: 0;
             text-align: center;
             padding-bottom: 20px;
         }
         
         .video-container {
-             /* 关键 #4: 让视频容器填满 #content 内的所有剩余空间 */
             flex: 1;
-            min-height: 0; /* 安全措施 */
-            
+            min-height: 0;
             display: flex;
             justify-content: center;
             align-items: center;
         }
 
         #eyeTrackingVideoPlayer {
-            /* 关键 #5: 视频最大化填充其容器，并保持比例 */
             max-width: 100%;
             max-height: 100%;
             border-radius: 8px;
@@ -127,11 +117,7 @@
         .btn:hover { background: #45a049; }
         .btn:disabled { background: #ccc; cursor: not-allowed; }
         .status { position: fixed; top: 20px; left: 20px; padding: 10px 15px; border-radius: 20px; font-weight: bold; z-index: 2000; }
-        .status.ready { background: #4CAF50; color: white; }
-        .status.calibrating { background: #ff9800; color: white; }
-        .status.error { background: #f44336; color: white; }
-        .status.initializing { background: #2196F3; color: white; }
-        .status.loading { background: #9C27B0; color: white; }
+        .status.ready { background: #4CAF50; color: white; } .status.calibrating { background: #ff9800; color: white; } .status.error { background: #f44336; color: white; } .status.initializing { background: #2196F3; color: white; } .status.loading { background: #9C27B0; color: white; }
         #webgazerVideoContainer { display: block !important; position: fixed !important; top: 0px !important; left: 0px !important; width: 320px !important; height: 240px !important; z-index: 1; }
         .Calibration { width: 20px; height: 20px; border-radius: 25px; background-color: red; opacity: 0.2; border: 1px solid black; position:fixed; z-index: 100000; }
         #Pt1{ top: 70px; left:340px; } #Pt2{ top: 70px; left:50vw; margin-left: 340; } #Pt3{ top: 70px; right:2vw; } #Pt4{ top:50vh; left:2vw; } #Pt5{ top: 50vh; left: 50vw; } #Pt6{ top: 50vh; right:2vw; } #Pt7{ bottom:2vw; left: 2vw; } #Pt8{ bottom:2vw; left:50vw; } #Pt9{ bottom:2vw; right:2vw; }
@@ -263,7 +249,7 @@
         }
         
         // ===========================================
-        // 视频处理逻辑 (已简化)
+        // 视频处理逻辑
         // ===========================================
         function setupVideoPlayer() {
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
@@ -645,6 +631,14 @@
             document.getElementById('startBtn').disabled = false;
             document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
             document.getElementById('calibrateBtn').disabled = true;
+        }
+
+        // Note: The 'stopTracking' function is kept in case it's needed later,
+        // but the button that calls it has been removed from the HTML.
+        function stopTracking() {
+            if (!isTracking) return;
+            swal({ title: "确认停止", text: "确定要停止追踪吗？", icon: "warning", buttons: true, dangerMode: true, })
+            .then((willStop) => { if (willStop) performStop(); });
         }
 
         window.addEventListener('load', initializeSystem);
