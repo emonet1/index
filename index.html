@@ -162,12 +162,15 @@
     </div>
 
     <div id="content">
+        <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统</h1>
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()" disabled>🚀 启动眼动追踪</button>
             <button class="btn" id="calibrateBtn" onclick="PopUpInstruction()" disabled>🎯 开始校准</button>
             <button class="btn" onclick="Restart()">🔄 重新校准</button>
             <button class="btn" onclick="exportData()">📊 导出数据</button>
+            <button class="btn danger" onclick="stopTracking()">⏹️ 停止追踪</button>
         </div>
+        <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">👀 请自然地浏览下面的视频内容，系统会完整收集您的眼动数据</p>
 
         <!-- =========================================== -->
         <!-- == 视频播放器区域 (已修改) == -->
