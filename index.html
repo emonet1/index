@@ -61,12 +61,12 @@
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
         #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
-        #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        #content { position: relative; z-index: 1; padding: 30px; max-width: 800px; margin: 10px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
         .stat-item { margin: 8px 0; display: flex; justify-content: space-between; }
         .stat-value { font-weight: bold; color: #4CAF50; }
         #debugPanel { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.9); color: #00ff00; padding: 15px; border-radius: 8px; z-index: 2000; max-width: 350px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; display: none; }
-        .controls { text-align: center; margin: 30px 0; }
+        .controls { text-align: center; margin: 20px 0; }
         .btn { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; margin: 0 10px; font-size: 16px; transition: background 0.3s; }
         .btn:hover { background: #45a049; }
         .btn.danger { background: #f44336; }
@@ -162,35 +162,22 @@
     </div>
 
     <div id="content">
-        <h1 style="text-align: center; color: #333;">👁️ 眼动追踪数据收集系统</h1>
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()" disabled>🚀 启动眼动追踪</button>
             <button class="btn" id="calibrateBtn" onclick="PopUpInstruction()" disabled>🎯 开始校准</button>
             <button class="btn" onclick="Restart()">🔄 重新校准</button>
             <button class="btn" onclick="exportData()">📊 导出数据</button>
-            <button class="btn danger" onclick="stopTracking()">⏹️ 停止追踪</button>
         </div>
-        <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">👀 请自然地浏览下面的视频内容，系统会完整收集您的眼动数据</p>
 
-        <!-- =========================================== -->
-        <!-- == 视频播放器区域 (已修改) == -->
-        <!-- =========================================== -->
-        <div style="text-align: center; margin: 40px 0; padding: 20px; background: #f2f2f2; border-radius: 8px;">
-            <h2 style="color: #333; margin-bottom: 20px;">🎬 视频观看眼动分析区</h2>
-            <p>请点击下方播放按钮，并自然观看视频。系统将记录您在观看视频时的眼动轨迹。</p>
-            
-            <!-- 视频播放器现在直接嵌入了来自Cloudinary的视频 -->
+        <div style="text-align: center; margin: 20px 0; padding: 15px; background: #f2f2f2; border-radius: 8px;">
             <video 
                 id="eyeTrackingVideoPlayer" 
                 src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
                 width="100%" 
                 controls 
-                style="border-radius: 8px; background: #000;"
+                style="border-radius: 8px; background: #000; max-height: 400px;"
             ></video>
         </div>
-        <!-- =========================================== -->
-        <!-- == 视频播放器区域结束 == -->
-        <!-- =========================================== -->
 
     </div>
 
@@ -646,12 +633,6 @@
             }
         }
 
-        function stopTracking() {
-            if (!isTracking) return;
-            swal({ title: "确认停止", text: "确定要停止追踪吗？", icon: "warning", buttons: true, dangerMode: true, })
-            .then((willStop) => { if (willStop) performStop(); });
-        }
-        
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
@@ -666,7 +647,6 @@
             document.getElementById('startBtn').disabled = false;
             document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
             document.getElementById('calibrateBtn').disabled = true;
-            swal('已停止', `眼动追踪已停止。`, 'success');
         }
 
         window.addEventListener('load', initializeSystem);
