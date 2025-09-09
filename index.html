@@ -56,7 +56,7 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        /* === 布局修正：使用 CSS Grid 确保视频可见 === */
+        /* === 布局修正：使用 Flexbox + Absolute Positioning === */
         html, body {
             height: 100%;
             margin: 0;
@@ -71,36 +71,33 @@
             flex-direction: column;
             height: 100vh;
             padding: 20px;
+            box-sizing: border-box;
             max-width: 900px;
             margin: 0 auto;
-            box-sizing: border-box;
             background: white;
         }
         
         .controls {
+            flex-shrink: 0; /* 防止此区域被压缩 */
             text-align: center;
-            margin-bottom: 20px;
-            flex-shrink: 0;
+            padding-bottom: 20px; /* 与视频的间距 */
         }
         
         .video-container {
-            flex: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 400px;
-            background: #f5f5f5;
-            border-radius: 8px;
+            flex-grow: 1; /* 占据所有剩余的垂直空间 */
+            position: relative; /* 关键：为内部的绝对定位元素创建基准 */
+            min-height: 0; /* 防止flex子项溢出的安全措施 */
         }
 
         #eyeTrackingVideoPlayer {
+            position: absolute; /* 关键：相对于.video-container定位 */
+            top: 0;
+            left: 0;
             width: 100%;
-            height: auto;
-            max-width: 100%;
-            max-height: 100%;
+            height: 100%;
+            object-fit: contain; /* 保持视频宽高比，防止拉伸 */
             border-radius: 8px;
             background: #000;
-            object-fit: contain;
         }
         
         /* === 原有样式 === */
@@ -178,11 +175,7 @@
                 id="eyeTrackingVideoPlayer" 
                 src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
                 controls
-                preload="metadata"
-                style="width: 100%; height: auto; max-height: 500px;"
-            >
-                您的浏览器不支持视频播放。
-            </video>
+            ></video>
         </div>
     </div>
 
@@ -627,7 +620,7 @@
         }
         
         async function performStop() {
-            if(!isTracking) return; // 防止重复执行
+            if(!isTracking) return;
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
