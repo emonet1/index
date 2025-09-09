@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪 - 视频观看版</title>
+    <title>眼动追踪数据收集系统 - 视频观看版</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -19,14 +19,16 @@
             appId: "1:718279245978:web:93a9a07473ad8d3e6a5f23"
         };
         
+        // 初始化 Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
         
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        const userId = 'index_video_test';
+        const userId = 'index_video_test'; // 使用一个特定的用户ID
         console.log('会话ID:', sessionId);
         console.log('用户ID:', userId);
 
+        // 动态加载WebGazer
         async function loadWebGazerScript() {
             const sources = [
                 'https://webgazer.cs.brown.edu/webgazer.js',
@@ -56,74 +58,66 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        /* === 布局修正：使用稳健的嵌套Flexbox模型 === */
-        html {
-            height: 100%;
-        }
-        
-        body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-            background: #f0f0f0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        
-        #content {
-            width: 100%;
-            max-width: 900px;
-            flex: 1; 
-            min-height: 0;
-            display: flex;
-            flex-direction: column;
-            padding: 20px;
-            box-sizing: border-box;
-            background: white;
-        }
-        
-        .controls {
-            flex-shrink: 0;
-            text-align: center;
-            padding-bottom: 20px;
-        }
-        
-        .video-container {
-            flex: 1;
-            min-height: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #eyeTrackingVideoPlayer {
-            max-width: 100%;
-            max-height: 100%;
-            border-radius: 8px;
-            background: #000;
-        }
-        
-        /* === 原有样式 === */
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
         #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
+        #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
         .stat-item { margin: 8px 0; display: flex; justify-content: space-between; }
         .stat-value { font-weight: bold; color: #4CAF50; }
         #debugPanel { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.9); color: #00ff00; padding: 15px; border-radius: 8px; z-index: 2000; max-width: 350px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; display: none; }
+        .controls { text-align: center; margin: 30px 0; }
         .btn { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; margin: 0 10px; font-size: 16px; transition: background 0.3s; }
         .btn:hover { background: #45a049; }
+        .btn.danger { background: #f44336; }
+        .btn.danger:hover { background: #da190b; }
         .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .btn.test { background: #2196F3; }
+        .btn.test:hover { background: #1976D2; }
+        .btn.toggle { background: #FF9800; }
+        .btn.toggle:hover { background: #F57C00; }
         .status { position: fixed; top: 20px; left: 20px; padding: 10px 15px; border-radius: 20px; font-weight: bold; z-index: 2000; }
-        .status.ready { background: #4CAF50; color: white; } .status.calibrating { background: #ff9800; color: white; } .status.error { background: #f44336; color: white; } .status.initializing { background: #2196F3; color: white; } .status.loading { background: #9C27B0; color: white; }
-        #webgazerVideoContainer { display: block !important; position: fixed !important; top: 0px !important; left: 0px !important; width: 320px !important; height: 240px !important; z-index: 1; }
-        .Calibration { width: 20px; height: 20px; border-radius: 25px; background-color: red; opacity: 0.2; border: 1px solid black; position:fixed; z-index: 100000; }
-        #Pt1{ top: 70px; left:340px; } #Pt2{ top: 70px; left:50vw; margin-left: 340; } #Pt3{ top: 70px; right:2vw; } #Pt4{ top:50vh; left:2vw; } #Pt5{ top: 50vh; left: 50vw; } #Pt6{ top: 50vh; right:2vw; } #Pt7{ bottom:2vw; left: 2vw; } #Pt8{ bottom:2vw; left:50vw; } #Pt9{ bottom:2vw; right:2vw; }
+        .status.ready { background: #4CAF50; color: white; }
+        .status.calibrating { background: #ff9800; color: white; }
+        .status.error { background: #f44336; color: white; }
+        .status.initializing { background: #2196F3; color: white; }
+        .status.loading { background: #9C27B0; color: white; }
+        
+        #webgazerVideoContainer {
+            display: block !important; 
+            position: fixed !important;
+            top: 0px !important;
+            left: 0px !important;
+            width: 320px !important;
+            height: 240px !important;
+            z-index: 1;
+        }
+        
+        .Calibration {
+            width: 20px;
+            height: 20px;
+            border-radius: 25px;
+            background-color: red;
+            opacity: 0.2;
+            border: 1px solid black;
+            position:fixed;
+            z-index: 100000;
+        }
+        #Pt1{ top: 70px; left:340px; }
+        #Pt2{ top: 70px; left:50vw; margin-left: 340; }
+        #Pt3{ top: 70px; right:2vw; }
+        #Pt4{ top:50vh; left:2vw; }
+        #Pt5{ top: 50vh; left: 50vw; }
+        #Pt6{ top: 50vh; right:2vw; }
+        #Pt7{ bottom:2vw; left: 2vw; }
+        #Pt8{ bottom:2vw; left:50vw; }
+        #Pt9{ bottom:2vw; right:2vw; }
+
         #Accuracy { background-color: #222; color: white; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
-        .collection-status.connected { background: #4CAF50; color: white; } .collection-status.disconnected { background: #f44336; color: white; } .collection-status.uploading { background: #ff9800; color: white; }
+        .collection-status.connected { background: #4CAF50; color: white; }
+        .collection-status.disconnected { background: #f44336; color: white; }
+        .collection-status.uploading { background: #ff9800; color: white; }
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
         .heatmap-visible { visibility: visible !important; }
     </style>
@@ -156,7 +150,15 @@
     <div id="heatmapContainer"></div>
     
     <div class="calibrationDiv">
-        <input type="button" class="Calibration" id="Pt1"><input type="button" class="Calibration" id="Pt2"><input type="button" class="Calibration" id="Pt3"><input type="button" class="Calibration" id="Pt4"><input type="button" class="Calibration" id="Pt5"><input type="button" class="Calibration" id="Pt6"><input type="button" class="Calibration" id="Pt7"><input type="button" class="Calibration" id="Pt8"><input type="button" class="Calibration" id="Pt9">
+        <input type="button" class="Calibration" id="Pt1">
+        <input type="button" class="Calibration" id="Pt2">
+        <input type="button" class="Calibration" id="Pt3">
+        <input type="button" class="Calibration" id="Pt4">
+        <input type="button" class="Calibration" id="Pt5">
+        <input type="button" class="Calibration" id="Pt6">
+        <input type="button" class="Calibration" id="Pt7">
+        <input type="button" class="Calibration" id="Pt8">
+        <input type="button" class="Calibration" id="Pt9">
     </div>
 
     <div id="content">
@@ -167,17 +169,29 @@
             <button class="btn" onclick="exportData()">📊 导出数据</button>
         </div>
 
-        <div class="video-container">
+        <!-- =========================================== -->
+        <!-- == 视频播放器区域 (已修改) == -->
+        <!-- =========================================== -->
+        <div style="text-align: center; margin: 40px 0; padding: 20px; background: #f2f2f2; border-radius: 8px;">
+            <h2 style="color: #333; margin-bottom: 20px;">🎬 视频观看眼动分析区</h2>
+            <p>请点击下方播放按钮，并自然观看视频。系统将记录您在观看视频时的眼动轨迹。</p>
+            
+            <!-- 视频播放器现在直接嵌入了来自Cloudinary的视频 -->
             <video 
                 id="eyeTrackingVideoPlayer" 
                 src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
-                controls
+                width="100%" 
+                controls 
+                style="border-radius: 8px; background: #000;"
             ></video>
         </div>
+        <!-- =========================================== -->
+        <!-- == 视频播放器区域结束 == -->
+        <!-- =========================================== -->
+
     </div>
 
     <script>
-        // ... JavaScript代码部分保持不变 ...
         // ===========================================
         // 全局变量定义
         // ===========================================
@@ -249,16 +263,20 @@
         }
         
         // ===========================================
-        // 视频处理逻辑
+        // 视频处理逻辑 (已简化)
         // ===========================================
         function setupVideoPlayer() {
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            
+            // 由于视频源已在HTML中设置，我们只需监听播放和暂停事件即可
             videoPlayer.onplay = () => {
                 debug(`视频开始播放，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
             };
+            
             videoPlayer.onpause = () => {
                 debug(`视频已暂停，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
             };
+
             debug("视频播放器已准备就绪。");
         }
 
@@ -284,10 +302,14 @@
                 relativeY: null
             };
 
+            // 检查视频是否正在播放，以关联眼动数据和视频时间戳
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
+                
+                // 计算相对于视频播放器的坐标
                 const relX = gazePoint.x - videoRect.left;
                 const relY = gazePoint.y - videoRect.top;
+
                 if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
                     gazePoint.relativeX = Math.floor(relX);
                     gazePoint.relativeY = Math.floor(relY);
@@ -352,7 +374,11 @@
             try {
                 heatmapContainer.style.visibility = 'hidden';
                 debug('正在截取背景页面 (用户所见)...');
-                const backgroundCanvas = await html2canvas(document.body, { useCORS: true, logging: false, ignoreElements: (element) => element.id === 'heatmapContainer' });
+                const backgroundCanvas = await html2canvas(document.body, {
+                    useCORS: true,
+                    logging: false,
+                    ignoreElements: (element) => element.id === 'heatmapContainer'
+                });
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
                 if (!heatmapCanvas) { throw new Error('无法找到 heatmap.js 的 canvas 元素！'); }
                 debug('正在后台合成热力图与背景...');
@@ -552,6 +578,7 @@
         // =======================================================================
         // 系统控制与生命周期
         // =======================================================================
+
         function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
         
         function toggleHeatmap() { 
@@ -615,9 +642,14 @@
                 swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
             }
         }
+
+        function stopTracking() {
+            if (!isTracking) return;
+            swal({ title: "确认停止", text: "确定要停止追踪吗？", icon: "warning", buttons: true, dangerMode: true, })
+            .then((willStop) => { if (willStop) performStop(); });
+        }
         
         async function performStop() {
-            if(!isTracking) return;
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
@@ -631,14 +663,7 @@
             document.getElementById('startBtn').disabled = false;
             document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
             document.getElementById('calibrateBtn').disabled = true;
-        }
-
-        // Note: The 'stopTracking' function is kept in case it's needed later,
-        // but the button that calls it has been removed from the HTML.
-        function stopTracking() {
-            if (!isTracking) return;
-            swal({ title: "确认停止", text: "确定要停止追踪吗？", icon: "warning", buttons: true, dangerMode: true, })
-            .then((willStop) => { if (willStop) performStop(); });
+            swal('已停止', `眼动追踪已停止。`, 'success');
         }
 
         window.addEventListener('load', initializeSystem);
@@ -646,7 +671,8 @@
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
         window.addEventListener('beforeunload', (e) => {
             if (isTracking && eyeTrackingData.gazePoints.length > 0) {
-                performStop();
+                const message = '您有未保存的数据，确定要离开吗？';
+                e.returnValue = message; return message;
             }
         });
         document.addEventListener('visibilitychange', () => {
