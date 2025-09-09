@@ -56,12 +56,12 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        /* === 布局调整：防止页面滚动 === */
+        /* === 布局调整：防止页面滚动 (已修正) === */
         html, body {
             height: 100%;
             margin: 0;
             padding: 0;
-            overflow: hidden; /* 核心：禁止滚动条出现 */
+            overflow: hidden;
             font-family: Arial, sans-serif;
             background: #f0f0f0;
         }
@@ -69,21 +69,39 @@
         #content {
             display: flex;
             flex-direction: column;
-            justify-content: center; /* 垂直居中内容 */
-            align-items: center; /* 水平居中内容 */
-            height: 100vh; /* 占满整个视口高度 */
+            justify-content: flex-start; /* 修正 #1: 从顶部开始排列，不再居中 */
+            align-items: center;
+            height: 100vh;
             padding: 20px;
             max-width: 900px;
             margin: 0 auto;
             box-sizing: border-box;
             background: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         
         .controls {
             text-align: center;
-            margin-bottom: 25px; /* 调整与视频的间距 */
+            margin-bottom: 20px;
+            flex-shrink: 0; /* 防止控制按钮区域被压缩 */
+        }
+        
+        /* 修正 #2: 为视频容器添加样式 */
+        .video-container {
+            width: 100%;
+            flex: 1; /* 关键：让此容器占据所有剩余空间 */
+            min-height: 0; /* 防止flex布局在内容过大时出现问题 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #eyeTrackingVideoPlayer {
+            /* 修正 #3: 确保视频适应其容器大小并保持比例 */
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 8px;
+            background: #000;
+            object-fit: contain; /* 保持视频的宽高比 */
         }
         
         /* === 原有样式 === */
@@ -107,20 +125,12 @@
         .status.initializing { background: #2196F3; color: white; }
         .status.loading { background: #9C27B0; color: white; }
         
-        #webgazerVideoContainer {
-            display: block !important; position: fixed !important; top: 0px !important; left: 0px !important; width: 320px !important; height: 240px !important; z-index: 1;
-        }
-        
-        .Calibration {
-            width: 20px; height: 20px; border-radius: 25px; background-color: red; opacity: 0.2; border: 1px solid black; position:fixed; z-index: 100000;
-        }
+        #webgazerVideoContainer { display: block !important; position: fixed !important; top: 0px !important; left: 0px !important; width: 320px !important; height: 240px !important; z-index: 1; }
+        .Calibration { width: 20px; height: 20px; border-radius: 25px; background-color: red; opacity: 0.2; border: 1px solid black; position:fixed; z-index: 100000; }
         #Pt1{ top: 70px; left:340px; } #Pt2{ top: 70px; left:50vw; margin-left: 340; } #Pt3{ top: 70px; right:2vw; } #Pt4{ top:50vh; left:2vw; } #Pt5{ top: 50vh; left: 50vw; } #Pt6{ top: 50vh; right:2vw; } #Pt7{ bottom:2vw; left: 2vw; } #Pt8{ bottom:2vw; left:50vw; } #Pt9{ bottom:2vw; right:2vw; }
-
         #Accuracy { background-color: #222; color: white; padding: 8px; border-radius: 5px; text-align: center; }
         .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
-        .collection-status.connected { background: #4CAF50; color: white; }
-        .collection-status.disconnected { background: #f44336; color: white; }
-        .collection-status.uploading { background: #ff9800; color: white; }
+        .collection-status.connected { background: #4CAF50; color: white; } .collection-status.disconnected { background: #f44336; color: white; } .collection-status.uploading { background: #ff9800; color: white; }
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
         .heatmap-visible { visibility: visible !important; }
     </style>
@@ -157,25 +167,19 @@
     </div>
 
     <div id="content">
-        <!-- 标题和多余文字已删除 -->
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()" disabled>🚀 启动眼动追踪</button>
             <button class="btn" id="calibrateBtn" onclick="PopUpInstruction()" disabled>🎯 开始校准</button>
             <button class="btn" onclick="Restart()">🔄 重新校准</button>
             <button class="btn" onclick="exportData()">📊 导出数据</button>
-            <!-- 停止追踪按钮已删除 -->
         </div>
 
-        <!-- 视频播放器区域 -->
-        <div style="width:100%; text-align: center; background: #f2f2f2; border-radius: 8px; padding: 20px; box-sizing: border-box;">
-            <h2 style="color: #333; margin-top:0; margin-bottom: 15px;">🎬 视频观看眼动分析区</h2>
-            <p style="margin-top:0; margin-bottom: 15px;">请点击播放并观看视频。</p>
+        <!-- HTML结构调整：为视频包裹一个新的div -->
+        <div class="video-container">
             <video 
                 id="eyeTrackingVideoPlayer" 
                 src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
-                width="100%" 
-                controls 
-                style="border-radius: 8px; background: #000; display: block;"
+                controls
             ></video>
         </div>
     </div>
@@ -619,13 +623,6 @@
                 swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
             }
         }
-
-        // '停止追踪'按钮已删除, 但保留函数逻辑以供其他方式调用 (如关闭页面)
-        function stopTracking() {
-            if (!isTracking) return;
-            swal({ title: "确认停止", text: "确定要停止追踪吗？", icon: "warning", buttons: true, dangerMode: true, })
-            .then((willStop) => { if (willStop) performStop(); });
-        }
         
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
@@ -649,7 +646,8 @@
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
         window.addEventListener('beforeunload', (e) => {
             if (isTracking && eyeTrackingData.gazePoints.length > 0) {
-                const message = '您有未保存的数据，确定要离开吗？';
+                performStop(); // 页面关闭前自动停止并保存数据
+                const message = '您有未保存的数据，正在为您保存，请稍候...';
                 e.returnValue = message; return message;
             }
         });
