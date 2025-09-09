@@ -56,7 +56,7 @@
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        /* === 布局调整：防止页面滚动 (已修正) === */
+        /* === 布局修正：使用 CSS Grid 确保视频可见 === */
         html, body {
             height: 100%;
             margin: 0;
@@ -67,12 +67,11 @@
         }
         
         #content {
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-start; /* 修正 #1: 从顶部开始排列，不再居中 */
-            align-items: center;
+            display: grid; /* 使用 Grid 布局 */
+            grid-template-rows: auto 1fr; /* 关键修正：第一行自动高度，第二行占满剩余空间 */
             height: 100vh;
             padding: 20px;
+            gap: 20px; /* 在按钮和视频之间增加一些间距 */
             max-width: 900px;
             margin: 0 auto;
             box-sizing: border-box;
@@ -81,27 +80,22 @@
         
         .controls {
             text-align: center;
-            margin-bottom: 20px;
-            flex-shrink: 0; /* 防止控制按钮区域被压缩 */
+            /* margin-bottom 已被 gap 替代 */
         }
         
-        /* 修正 #2: 为视频容器添加样式 */
         .video-container {
             width: 100%;
-            flex: 1; /* 关键：让此容器占据所有剩余空间 */
-            min-height: 0; /* 防止flex布局在内容过大时出现问题 */
             display: flex;
             justify-content: center;
             align-items: center;
+            min-height: 0; /* Grid/Flex 布局中的安全措施 */
         }
 
         #eyeTrackingVideoPlayer {
-            /* 修正 #3: 确保视频适应其容器大小并保持比例 */
             max-width: 100%;
             max-height: 100%;
             border-radius: 8px;
             background: #000;
-            object-fit: contain; /* 保持视频的宽高比 */
         }
         
         /* === 原有样式 === */
@@ -174,7 +168,6 @@
             <button class="btn" onclick="exportData()">📊 导出数据</button>
         </div>
 
-        <!-- HTML结构调整：为视频包裹一个新的div -->
         <div class="video-container">
             <video 
                 id="eyeTrackingVideoPlayer" 
@@ -625,6 +618,7 @@
         }
         
         async function performStop() {
+            if(!isTracking) return; // 防止重复执行
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
@@ -638,7 +632,6 @@
             document.getElementById('startBtn').disabled = false;
             document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
             document.getElementById('calibrateBtn').disabled = true;
-            swal('已停止', `眼动追踪已停止。`, 'success');
         }
 
         window.addEventListener('load', initializeSystem);
@@ -646,9 +639,7 @@
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
         window.addEventListener('beforeunload', (e) => {
             if (isTracking && eyeTrackingData.gazePoints.length > 0) {
-                performStop(); // 页面关闭前自动停止并保存数据
-                const message = '您有未保存的数据，正在为您保存，请稍候...';
-                e.returnValue = message; return message;
+                performStop();
             }
         });
         document.addEventListener('visibilitychange', () => {
