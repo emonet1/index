@@ -143,6 +143,7 @@
         <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin: 8px 0 0 0; padding: 6px; font-size: 12px;">🧪 测试连接</button>
         <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">💾 强制保存</button>
         <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🔥 显示/隐藏热力图</button>
+        <button class="btn test" onclick="testVideoCapture()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">📹 测试视频截图</button>
         <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🐛 显示调试</button>
     </div>
 
@@ -260,6 +261,19 @@
         function setupVideoPlayer() {
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             
+            // 添加视频加载事件监听
+            videoPlayer.addEventListener('loadedmetadata', () => {
+                debug(`视频元数据加载完成: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
+            });
+            
+            videoPlayer.addEventListener('canplay', () => {
+                debug('视频可以开始播放');
+            });
+            
+            videoPlayer.addEventListener('error', (e) => {
+                debug(`视频加载错误: ${e.message}`);
+            });
+            
             // 由于视频源已在HTML中设置，我们只需监听播放和暂停事件即可
             videoPlayer.onplay = () => {
                 debug(`视频开始播放，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
@@ -270,6 +284,30 @@
             };
 
             debug("视频播放器已准备就绪。");
+        }
+
+        // 添加测试视频截图的函数
+        function testVideoCapture() {
+            const video = document.getElementById('eyeTrackingVideoPlayer');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = video.videoWidth || video.offsetWidth;
+            canvas.height = video.videoHeight || video.offsetHeight;
+            
+            try {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const dataURL = canvas.toDataURL('image/png');
+                
+                // 创建一个新窗口显示截图
+                const win = window.open();
+                win.document.write(`<img src="${dataURL}" style="max-width: 100%;">`);
+                debug('视频截图测试成功');
+                return true;
+            } catch (e) {
+                debug(`视频截图测试失败: ${e.message}`);
+                return false;
+            }
         }
 
         // ===========================================
@@ -369,66 +407,113 @@
                 
                 const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
                 
-                // 先创建一个临时canvas来绘制当前视频帧
-                const tempCanvas = document.createElement('canvas');
-                const tempCtx = tempCanvas.getContext('2d');
-                tempCanvas.width = originalVideo.videoWidth || originalVideo.offsetWidth;
-                tempCanvas.height = originalVideo.videoHeight || originalVideo.offsetHeight;
+                // 创建一个专门的截图Canvas
+                const screenshotCanvas = document.createElement('canvas');
+                const screenshotCtx = screenshotCanvas.getContext('2d');
+                screenshotCanvas.width = window.innerWidth;
+                screenshotCanvas.height = window.innerHeight;
                 
-                // 尝试绘制视频帧
-                let videoFrameDrawn = false;
-                try {
-                    tempCtx.drawImage(originalVideo, 0, 0, tempCanvas.width, tempCanvas.height);
-                    videoFrameDrawn = true;
-                    debug('成功捕获视频当前帧');
-                } catch (e) {
-                    debug('无法直接捕获视频帧，使用占位符: ' + e.message);
-                    // 绘制占位符
-                    tempCtx.fillStyle = '#222';
-                    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-                    tempCtx.fillStyle = '#fff';
-                    tempCtx.font = 'bold 24px Arial';
-                    tempCtx.textAlign = 'center';
-                    tempCtx.fillText('视频播放中', tempCanvas.width/2, tempCanvas.height/2);
-                    tempCtx.font = '16px Arial';
-                    tempCtx.fillText(`时间: ${originalVideo.currentTime.toFixed(1)}s`, tempCanvas.width/2, tempCanvas.height/2 + 30);
-                }
-                
-                // 配置html2canvas
-                const backgroundCanvas = await html2canvas(document.body, {
+                // 1. 先绘制背景（不包含视频的其他页面元素）
+                const pageCanvas = await html2canvas(document.body, {
                     useCORS: true,
                     allowTaint: true,
                     logging: false,
-                    foreignObjectRendering: false,
                     scale: 1,
                     backgroundColor: '#f0f0f0',
-                    ignoreElements: (element) => element.id === 'heatmapContainer',
-                    onclone: (clonedDoc) => {
-                        const videoElement = clonedDoc.getElementById('eyeTrackingVideoPlayer');
-                        if (videoElement && tempCanvas) {
-                            // 创建img元素来替换video元素
-                            const img = clonedDoc.createElement('img');
-                            img.src = tempCanvas.toDataURL('image/png');
-                            img.style.width = originalVideo.style.width || originalVideo.offsetWidth + 'px';
-                            img.style.height = originalVideo.style.height || originalVideo.offsetHeight + 'px';
-                            img.style.borderRadius = originalVideo.style.borderRadius;
-                            img.style.background = originalVideo.style.background;
-                            img.style.maxHeight = originalVideo.style.maxHeight;
-                            img.style.objectFit = 'contain';
-                            
-                            // 替换视频元素
-                            videoElement.parentNode.replaceChild(img, videoElement);
-                            debug('已将视频替换为静态图像用于截图');
-                        }
+                    ignoreElements: (element) => {
+                        return element.id === 'heatmapContainer' || element.id === 'eyeTrackingVideoPlayer';
                     }
                 });
                 
+                // 将页面背景绘制到截图canvas
+                screenshotCtx.drawImage(pageCanvas, 0, 0);
+                
+                // 2. 单独处理视频区域
+                const videoRect = originalVideo.getBoundingClientRect();
+                const videoWidth = videoRect.width;
+                const videoHeight = videoRect.height;
+                const videoX = videoRect.left;
+                const videoY = videoRect.top;
+                
+                // 创建视频帧canvas
+                const videoCanvas = document.createElement('canvas');
+                const videoCtx = videoCanvas.getContext('2d');
+                videoCanvas.width = videoWidth;
+                videoCanvas.height = videoHeight;
+                
+                let videoFrameDrawn = false;
+                try {
+                    // 尝试绘制视频当前帧
+                    if (originalVideo.videoWidth > 0 && originalVideo.videoHeight > 0) {
+                        videoCtx.drawImage(originalVideo, 0, 0, videoWidth, videoHeight);
+                        videoFrameDrawn = true;
+                        debug('成功捕获视频当前帧');
+                    } else {
+                        throw new Error('视频尺寸无效');
+                    }
+                } catch (e) {
+                    debug('无法直接捕获视频帧，创建替代图像: ' + e.message);
+                    // 创建一个替代图像
+                    const gradient = videoCtx.createLinearGradient(0, 0, videoWidth, videoHeight);
+                    gradient.addColorStop(0, '#2c3e50');
+                    gradient.addColorStop(1, '#34495e');
+                    videoCtx.fillStyle = gradient;
+                    videoCtx.fillRect(0, 0, videoWidth, videoHeight);
+                    
+                    // 添加播放图标和信息
+                    videoCtx.fillStyle = '#ecf0f1';
+                    videoCtx.strokeStyle = '#ecf0f1';
+                    videoCtx.lineWidth = 3;
+                    
+                    // 绘制播放三角形
+                    const centerX = videoWidth / 2;
+                    const centerY = videoHeight / 2;
+                    const size = Math.min(videoWidth, videoHeight) * 0.1;
+                    
+                    videoCtx.beginPath();
+                    videoCtx.moveTo(centerX - size, centerY - size);
+                    videoCtx.lineTo(centerX + size, centerY);
+                    videoCtx.lineTo(centerX - size, centerY + size);
+                    videoCtx.closePath();
+                    videoCtx.fill();
+                    
+                    // 添加文字信息
+                    videoCtx.font = 'bold 24px Arial';
+                    videoCtx.textAlign = 'center';
+                    videoCtx.fillText('视频播放中', centerX, centerY + size + 40);
+                    videoCtx.font = '18px Arial';
+                    videoCtx.fillText(`时间: ${originalVideo.currentTime.toFixed(1)}s`, centerX, centerY + size + 70);
+                }
+                
+                // 3. 将视频区域绘制到截图canvas的正确位置
+                screenshotCtx.save();
+                // 添加视频的边框圆角效果 - 使用更兼容的方法
+                screenshotCtx.beginPath();
+                const radius = 8;
+                screenshotCtx.moveTo(videoX + radius, videoY);
+                screenshotCtx.lineTo(videoX + videoWidth - radius, videoY);
+                screenshotCtx.quadraticCurveTo(videoX + videoWidth, videoY, videoX + videoWidth, videoY + radius);
+                screenshotCtx.lineTo(videoX + videoWidth, videoY + videoHeight - radius);
+                screenshotCtx.quadraticCurveTo(videoX + videoWidth, videoY + videoHeight, videoX + videoWidth - radius, videoY + videoHeight);
+                screenshotCtx.lineTo(videoX + radius, videoY + videoHeight);
+                screenshotCtx.quadraticCurveTo(videoX, videoY + videoHeight, videoX, videoY + videoHeight - radius);
+                screenshotCtx.lineTo(videoX, videoY + radius);
+                screenshotCtx.quadraticCurveTo(videoX, videoY, videoX + radius, videoY);
+                screenshotCtx.closePath();
+                screenshotCtx.clip();
+                screenshotCtx.drawImage(videoCanvas, videoX, videoY);
+                screenshotCtx.restore();
+                
+                // 4. 获取热力图并叠加
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
-                if (!heatmapCanvas) { throw new Error('无法找到 heatmap.js 的 canvas 元素！'); }
-                debug('正在后台合成热力图与背景...');
-                const context = backgroundCanvas.getContext('2d');
-                context.drawImage(heatmapCanvas, 0, 0);
-                const imageDataUrl = backgroundCanvas.toDataURL('image/png', 0.8);
+                if (!heatmapCanvas) { 
+                    throw new Error('无法找到 heatmap.js 的 canvas 元素！'); 
+                }
+                debug('正在叠加热力图...');
+                screenshotCtx.drawImage(heatmapCanvas, 0, 0);
+                
+                // 5. 转换为图片并上传
+                const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.9);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -451,7 +536,8 @@
                     sessionId, 
                     userId,
                     videoTimestamp: originalVideo.currentTime,
-                    videoFrameCaptured: videoFrameDrawn
+                    videoFrameCaptured: videoFrameDrawn,
+                    method: 'manual_composition'
                 });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
