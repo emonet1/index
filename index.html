@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 官方校准+精度测试版 (含视频分析 & 滚动修复)</title>
+    <title>眼动追踪数据收集系统 - 官方校准+精度测试版 </title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -59,8 +59,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        /* [核心修改] 将定位从 fixed 改为 absolute */
-        #heatmapContainer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; visibility: hidden; }
+        #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; /* 确保热力图在最上层 */ visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 50px; max-width: 800px; margin: 20px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
@@ -179,12 +178,22 @@
         </div>
         <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">👀 请自然地浏览下面的内容，系统会完整收集您的眼动数据</p>
 
+        <!-- =========================================== -->
+        <!-- == 新增：视频播放器区域 == -->
+        <!-- =========================================== -->
         <div style="text-align: center; margin: 40px 0; padding: 20px; background: #f2f2f2; border-radius: 8px;">
             <h2 style="color: #333; margin-bottom: 20px;">🎬 视频观看眼动分析区</h2>
             <p>请上传一个视频文件，点击播放后自然观看。系统将记录您在观看视频时的眼动轨迹。</p>
+            
+            <!-- 视频上传控件 -->
             <input type="file" id="videoUploader" accept="video/mp4,video/webm,video/ogg" style="margin-bottom: 15px;">
+            
+            <!-- 视频播放器 -->
             <video id="eyeTrackingVideoPlayer" width="100%" controls style="border-radius: 8px; background: #000;"></video>
         </div>
+        <!-- =========================================== -->
+        <!-- == 视频播放器区域结束 == -->
+        <!-- =========================================== -->
 
         <div class="test-area area-blue" onclick="debug('点击了蓝色区域')"><h2>🌊 区域 A - 海洋蓝</h2><p>这是第一个测试区域。请尝试注视这里几秒钟，系统会记录您的注视点坐标、注视时间和眼动模式。</p></div>
         <div class="test-area area-green" onclick="debug('点击了绿色区域')"><h2>🌿 区域 B - 森林绿</h2><p>这是第二个测试区域。在不同区域之间移动视线会产生眼跳数据，包括移动距离和速度。</p></div>
@@ -262,30 +271,9 @@
             if (!isTracking) return swal('提示', '请先启动眼动追踪。', 'info');
             await saveEyeTrackingData(true);
         }
-
-        // ===========================================
-        // [新增] 热力图容器尺寸管理
-        // ===========================================
-        function updateHeatmapContainerSize() {
-            const heatmapContainer = document.getElementById('heatmapContainer');
-            if (heatmapContainer) {
-                const pageHeight = Math.max(document.body.scrollHeight, document.body.offsetHeight, document.documentElement.clientHeight, document.documentElement.scrollHeight, document.documentElement.offsetHeight);
-                const pageWidth = Math.max(document.body.scrollWidth, document.body.offsetWidth, document.documentElement.clientWidth, document.documentElement.scrollWidth, document.documentElement.offsetWidth);
-                
-                heatmapContainer.style.height = `${pageHeight}px`;
-                heatmapContainer.style.width = `${pageWidth}px`;
-
-                if (heatmapInstance) {
-                    heatmapInstance.configure({
-                        container: heatmapContainer
-                    });
-                }
-                debug(`热力图容器尺寸已更新为: ${pageWidth}x${pageHeight}`);
-            }
-        }
         
         // ===========================================
-        // 视频处理逻辑
+        // 新增：视频处理逻辑
         // ===========================================
         function setupVideoPlayer() {
             const videoUploader = document.getElementById('videoUploader');
@@ -311,12 +299,13 @@
         }
 
         // ===========================================
-        // 眼动数据处理 (核心修改 - 坐标转换)
+        // 眼动数据处理 (核心修改)
         // ===========================================
         function gazeDataCallback(data, elapsedTime) {
             if (!isTracking || !data || typeof data.x !== 'number' || typeof data.y !== 'number' || isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) return;
             
             const timestamp = new Date().toISOString();
+            
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             const videoRect = videoPlayer.getBoundingClientRect();
 
@@ -329,15 +318,15 @@
                 userId,
                 videoTimestamp: null,
                 relativeX: null,
-                relativeY: null,
-                scrollX: window.scrollX,
-                scrollY: window.scrollY
+                relativeY: null
             };
 
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
+                
                 const relX = gazePoint.x - videoRect.left;
                 const relY = gazePoint.y - videoRect.top;
+
                 if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
                     gazePoint.relativeX = Math.floor(relX);
                     gazePoint.relativeY = Math.floor(relY);
@@ -346,17 +335,10 @@
 
             processSaccadeAndFixation(gazePoint);
             eyeTrackingData.gazePoints.push(gazePoint);
-            
-            if (heatmapInstance) {
-                const pageX = gazePoint.x + window.scrollX;
-                const pageY = gazePoint.y + window.scrollY;
-                heatmapInstance.addData({ x: pageX, y: pageY, value: 5 });
-            }
-
+            if (heatmapInstance) heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
             gazeCount++;
             if (gazeCount % 100 === 0) updateStatsDisplay();
         }
-
 
         function processSaccadeAndFixation(gazePoint) {
             if (!lastGazePoint) {
@@ -678,7 +660,7 @@
         function stopStatsUpdate() { if (statsUpdateInterval) clearInterval(statsUpdateInterval); }
         
         function exportData() {
-            if (gazeCount === 0) return swal('无数据', '没有可导出的数据。', 'warning');
+            if (gazeCount === 0) return swal('无数据', '沒有可导出的数据。', 'warning');
             const dataStr = JSON.stringify({ sessionInfo: { sessionId, userId }, collectedData: eyeTrackingData }, null, 2);
             const link = document.createElement('a');
             link.href = URL.createObjectURL(new Blob([dataStr], {type: 'application/json'}));
@@ -691,16 +673,16 @@
             try {
                 if (typeof h337 === 'undefined' || typeof swal === 'undefined') throw new Error('依赖库加载失败');
                 if (!await loadWebGazerScript() || typeof webgazer === 'undefined') throw new Error('WebGazer加载失败');
-                
                 heatmapInstance = h337.create({ container: document.getElementById('heatmapContainer'), radius: 25, maxOpacity: 0.6, minOpacity: 0.1, blur: 0.8 });
-                updateHeatmapContainerSize(); // [修改] 初始化热力图容器尺寸
-
                 await testFirebaseConnection();
                 updateStatus('系统就绪', 'ready');
                 document.getElementById('startBtn').disabled = false;
                 librariesLoaded = true;
                 ClearCanvas();
+                
+                // 修改：初始化视频播放器
                 setupVideoPlayer();
+
             } catch (error) {
                 updateStatus('初始化失败', 'error');
                 swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
@@ -747,7 +729,6 @@
                 webgazer.end();
                 debug("WebGazer.end() 已调用，停止追踪。");
             }
-
             ClearCalibration();
             ClearCanvas();
             updateStatus('已停止', 'error');
@@ -758,7 +739,6 @@
         }
 
         window.addEventListener('load', initializeSystem);
-        window.addEventListener('resize', updateHeatmapContainerSize); // [新增] 监听窗口尺寸变化
         window.addEventListener('error', (e) => debug(`全局错误: ${e.message}`));
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
         window.addEventListener('beforeunload', (e) => {
