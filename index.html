@@ -175,6 +175,8 @@
                 src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
                 width="100%" 
                 controls 
+                crossorigin="anonymous"
+                preload="auto"
                 style="border-radius: 8px; background: #000; max-height: 400px;"
             ></video>
         </div>
@@ -364,11 +366,63 @@
             try {
                 heatmapContainer.style.visibility = 'hidden';
                 debug('正在截取背景页面 (用户所见)...');
+                
+                const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
+                
+                // 先创建一个临时canvas来绘制当前视频帧
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = originalVideo.videoWidth || originalVideo.offsetWidth;
+                tempCanvas.height = originalVideo.videoHeight || originalVideo.offsetHeight;
+                
+                // 尝试绘制视频帧
+                let videoFrameDrawn = false;
+                try {
+                    tempCtx.drawImage(originalVideo, 0, 0, tempCanvas.width, tempCanvas.height);
+                    videoFrameDrawn = true;
+                    debug('成功捕获视频当前帧');
+                } catch (e) {
+                    debug('无法直接捕获视频帧，使用占位符: ' + e.message);
+                    // 绘制占位符
+                    tempCtx.fillStyle = '#222';
+                    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+                    tempCtx.fillStyle = '#fff';
+                    tempCtx.font = 'bold 24px Arial';
+                    tempCtx.textAlign = 'center';
+                    tempCtx.fillText('视频播放中', tempCanvas.width/2, tempCanvas.height/2);
+                    tempCtx.font = '16px Arial';
+                    tempCtx.fillText(`时间: ${originalVideo.currentTime.toFixed(1)}s`, tempCanvas.width/2, tempCanvas.height/2 + 30);
+                }
+                
+                // 配置html2canvas
                 const backgroundCanvas = await html2canvas(document.body, {
                     useCORS: true,
+                    allowTaint: true,
                     logging: false,
-                    ignoreElements: (element) => element.id === 'heatmapContainer'
+                    foreignObjectRendering: false,
+                    scale: 1,
+                    backgroundColor: '#f0f0f0',
+                    ignoreElements: (element) => element.id === 'heatmapContainer',
+                    onclone: (clonedDoc) => {
+                        const videoElement = clonedDoc.getElementById('eyeTrackingVideoPlayer');
+                        if (videoElement && tempCanvas) {
+                            // 创建img元素来替换video元素
+                            const img = clonedDoc.createElement('img');
+                            img.src = tempCanvas.toDataURL('image/png');
+                            img.style.width = originalVideo.style.width || originalVideo.offsetWidth + 'px';
+                            img.style.height = originalVideo.style.height || originalVideo.offsetHeight + 'px';
+                            img.style.borderRadius = originalVideo.style.borderRadius;
+                            img.style.background = originalVideo.style.background;
+                            img.style.maxHeight = originalVideo.style.maxHeight;
+                            img.style.objectFit = 'contain';
+                            
+                            // 替换视频元素
+                            videoElement.parentNode.replaceChild(img, videoElement);
+                            debug('已将视频替换为静态图像用于截图');
+                        }
+                    }
                 });
+                
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
                 if (!heatmapCanvas) { throw new Error('无法找到 heatmap.js 的 canvas 元素！'); }
                 debug('正在后台合成热力图与背景...');
@@ -390,7 +444,15 @@
                 const data = await response.json();
                 const secureUrl = data.secure_url;
                 debug(`合并热力图上传成功: ${secureUrl}`);
-                eyeTrackingData.heatmapSnapshots.push({ timestamp: new Date().toISOString(), storageUrl: secureUrl, provider: 'cloudinary', sessionId, userId });
+                eyeTrackingData.heatmapSnapshots.push({ 
+                    timestamp: new Date().toISOString(), 
+                    storageUrl: secureUrl, 
+                    provider: 'cloudinary', 
+                    sessionId, 
+                    userId,
+                    videoTimestamp: originalVideo.currentTime,
+                    videoFrameCaptured: videoFrameDrawn
+                });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
             } catch (error) {
