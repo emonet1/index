@@ -67,11 +67,10 @@
         }
         
         #content {
-            display: grid; /* 使用 Grid 布局 */
-            grid-template-rows: auto 1fr; /* 关键修正：第一行自动高度，第二行占满剩余空间 */
+            display: flex;
+            flex-direction: column;
             height: 100vh;
             padding: 20px;
-            gap: 20px; /* 在按钮和视频之间增加一些间距 */
             max-width: 900px;
             margin: 0 auto;
             box-sizing: border-box;
@@ -80,22 +79,28 @@
         
         .controls {
             text-align: center;
-            /* margin-bottom 已被 gap 替代 */
+            margin-bottom: 20px;
+            flex-shrink: 0;
         }
         
         .video-container {
-            width: 100%;
+            flex: 1;
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 0; /* Grid/Flex 布局中的安全措施 */
+            min-height: 400px;
+            background: #f5f5f5;
+            border-radius: 8px;
         }
 
         #eyeTrackingVideoPlayer {
+            width: 100%;
+            height: auto;
             max-width: 100%;
             max-height: 100%;
             border-radius: 8px;
             background: #000;
+            object-fit: contain;
         }
         
         /* === 原有样式 === */
@@ -173,7 +178,11 @@
                 id="eyeTrackingVideoPlayer" 
                 src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
                 controls
-            ></video>
+                preload="metadata"
+                style="width: 100%; height: auto; max-height: 500px;"
+            >
+                您的浏览器不支持视频播放。
+            </video>
         </div>
     </div>
 
