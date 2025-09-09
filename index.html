@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 官方校准+精度测试版</title>
+    <title>眼动追踪数据收集系统 - 官方校准+精度测试版 </title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -177,6 +177,24 @@
             <button class="btn danger" onclick="stopTracking()">⏹️ 停止追踪</button>
         </div>
         <p style="text-align: center; font-size: 18px; color: #666; margin: 30px 0;">👀 请自然地浏览下面的内容，系统会完整收集您的眼动数据</p>
+
+        <!-- =========================================== -->
+        <!-- == 新增：视频播放器区域 == -->
+        <!-- =========================================== -->
+        <div style="text-align: center; margin: 40px 0; padding: 20px; background: #f2f2f2; border-radius: 8px;">
+            <h2 style="color: #333; margin-bottom: 20px;">🎬 视频观看眼动分析区</h2>
+            <p>请上传一个视频文件，点击播放后自然观看。系统将记录您在观看视频时的眼动轨迹。</p>
+            
+            <!-- 视频上传控件 -->
+            <input type="file" id="videoUploader" accept="video/mp4,video/webm,video/ogg" style="margin-bottom: 15px;">
+            
+            <!-- 视频播放器 -->
+            <video id="eyeTrackingVideoPlayer" width="100%" controls style="border-radius: 8px; background: #000;"></video>
+        </div>
+        <!-- =========================================== -->
+        <!-- == 视频播放器区域结束 == -->
+        <!-- =========================================== -->
+
         <div class="test-area area-blue" onclick="debug('点击了蓝色区域')"><h2>🌊 区域 A - 海洋蓝</h2><p>这是第一个测试区域。请尝试注视这里几秒钟，系统会记录您的注视点坐标、注视时间和眼动模式。</p></div>
         <div class="test-area area-green" onclick="debug('点击了绿色区域')"><h2>🌿 区域 B - 森林绿</h2><p>这是第二个测试区域。在不同区域之间移动视线会产生眼跳数据，包括移动距离和速度。</p></div>
         <div class="test-area area-orange" onclick="debug('点击了橙色区域')"><h2>🔥 区域 C - 夕阳橙</h2><p>这是第三个测试区域。长时间注视会生成注视数据。系统每隔几秒会将生成的热力图快照上传到云端存储。</p></div>
@@ -255,13 +273,65 @@
         }
         
         // ===========================================
-        // 眼动数据处理
+        // 新增：视频处理逻辑
+        // ===========================================
+        function setupVideoPlayer() {
+            const videoUploader = document.getElementById('videoUploader');
+            const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+
+            videoUploader.addEventListener('change', function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    const videoURL = URL.createObjectURL(file);
+                    videoPlayer.src = videoURL;
+                    videoPlayer.load();
+                    debug(`视频文件 "${file.name}" 已加载。`);
+                    
+                    videoPlayer.onplay = () => {
+                        debug(`视频开始播放，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
+                    };
+                    
+                    videoPlayer.onpause = () => {
+                        debug(`视频已暂停，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
+                    };
+                }
+            });
+        }
+
+        // ===========================================
+        // 眼动数据处理 (核心修改)
         // ===========================================
         function gazeDataCallback(data, elapsedTime) {
             if (!isTracking || !data || typeof data.x !== 'number' || typeof data.y !== 'number' || isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) return;
             
             const timestamp = new Date().toISOString();
-            let gazePoint = { x: Math.floor(data.x), y: Math.floor(data.y), timestamp, elapsedTime: elapsedTime || Date.now() - startTime, sessionId, userId };
+            
+            const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            const videoRect = videoPlayer.getBoundingClientRect();
+
+            let gazePoint = { 
+                x: Math.floor(data.x), 
+                y: Math.floor(data.y), 
+                timestamp, 
+                elapsedTime: elapsedTime || Date.now() - startTime, 
+                sessionId, 
+                userId,
+                videoTimestamp: null,
+                relativeX: null,
+                relativeY: null
+            };
+
+            if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0) {
+                gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
+                
+                const relX = gazePoint.x - videoRect.left;
+                const relY = gazePoint.y - videoRect.top;
+
+                if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
+                    gazePoint.relativeX = Math.floor(relX);
+                    gazePoint.relativeY = Math.floor(relY);
+                }
+            }
 
             processSaccadeAndFixation(gazePoint);
             eyeTrackingData.gazePoints.push(gazePoint);
@@ -315,41 +385,23 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
         
-        // [已修正] 采用分步手动合成的最终截图方案，确保无闪烁
         async function captureHeatmapSnapshot() {
             const heatmapContainer = document.getElementById('heatmapContainer');
-            
-            // 保存热力图容器的原始可见状态，通常是 'hidden'
             const originalVisibility = heatmapContainer.style.visibility;
-
             try {
-                // 1. 强制隐藏热力图容器，以截取干净的背景
                 heatmapContainer.style.visibility = 'hidden';
                 debug('正在截取背景页面 (用户所见)...');
-                
-                // 2. 截取用户看到的、不包含热力图的页面
                 const backgroundCanvas = await html2canvas(document.body, {
                     useCORS: true,
                     logging: false,
-                    // 忽略我们正在操作的元素，避免潜在的渲染冲突
                     ignoreElements: (element) => element.id === 'heatmapContainer'
                 });
-
-                // 3. 从（被隐藏的）容器中获取热力图canvas
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
-                if (!heatmapCanvas) {
-                    throw new Error('无法找到 heatmap.js 的 canvas 元素！');
-                }
-
-                // 4. 在代码中，将热力图绘制到背景截图之上（离屏合成）
+                if (!heatmapCanvas) { throw new Error('无法找到 heatmap.js 的 canvas 元素！'); }
                 debug('正在后台合成热力图与背景...');
                 const context = backgroundCanvas.getContext('2d');
                 context.drawImage(heatmapCanvas, 0, 0);
-
-                // 5. 从合并后的canvas生成最终图像
                 const imageDataUrl = backgroundCanvas.toDataURL('image/png', 0.8);
-                
-                // 6. 上传逻辑...
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -357,7 +409,6 @@
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
                 formData.append('folder', `heatmaps/${userId}/${sessionId}`);
-                
                 const response = await fetch(url, { method: 'POST', body: formData });
                 if (!response.ok) {
                     const errorData = await response.json();
@@ -366,20 +417,16 @@
                 const data = await response.json();
                 const secureUrl = data.secure_url;
                 debug(`合并热力图上传成功: ${secureUrl}`);
-
                 eyeTrackingData.heatmapSnapshots.push({ timestamp: new Date().toISOString(), storageUrl: secureUrl, provider: 'cloudinary', sessionId, userId });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
-
             } catch (error) {
                 console.error("捕获或上传合并的热力图快照时出错: ", error);
                 debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
             } finally {
-                // 7. 无论成功与否，都将热力图容器恢复到其原始状态
                 heatmapContainer.style.visibility = originalVisibility;
             }
         }
-
 
         function startAutoSave() {
             if (autoSaveInterval) clearInterval(autoSaveInterval);
@@ -596,12 +643,9 @@
 
         function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
         
-        // "显示/隐藏热力图"按钮的逻辑
         function toggleHeatmap() { 
             const heatmapContainer = document.getElementById('heatmapContainer');
-            // 使用 classList.toggle 来切换 .heatmap-visible 类
             heatmapContainer.classList.toggle('heatmap-visible');
-            // 根据是否存在这个类来更新 style.visibility
             if (heatmapContainer.classList.contains('heatmap-visible')) {
                 heatmapContainer.style.visibility = 'visible';
             } else {
@@ -616,7 +660,7 @@
         function stopStatsUpdate() { if (statsUpdateInterval) clearInterval(statsUpdateInterval); }
         
         function exportData() {
-            if (gazeCount === 0) return swal('无数据', '没有可导出的数据。', 'warning');
+            if (gazeCount === 0) return swal('无数据', '沒有可导出的数据。', 'warning');
             const dataStr = JSON.stringify({ sessionInfo: { sessionId, userId }, collectedData: eyeTrackingData }, null, 2);
             const link = document.createElement('a');
             link.href = URL.createObjectURL(new Blob([dataStr], {type: 'application/json'}));
@@ -635,6 +679,10 @@
                 document.getElementById('startBtn').disabled = false;
                 librariesLoaded = true;
                 ClearCanvas();
+                
+                // 修改：初始化视频播放器
+                setupVideoPlayer();
+
             } catch (error) {
                 updateStatus('初始化失败', 'error');
                 swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
@@ -681,7 +729,6 @@
                 webgazer.end();
                 debug("WebGazer.end() 已调用，停止追踪。");
             }
-
             ClearCalibration();
             ClearCanvas();
             updateStatus('已停止', 'error');
