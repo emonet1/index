@@ -72,9 +72,7 @@
             border-radius: 10px; 
             z-index: 2000; 
             width: 200px; 
-            font-size: 11px; 
-            max-height: 80vh;
-            overflow-y: auto;
+            font-size: 11px;
         }
         .stat-item { 
             margin: 8px 0; 
@@ -162,7 +160,7 @@
         <div class="stat-item"><span>系统状态:</span><span id="systemStatus" class="stat-value">加载中</span></div>
         <div class="collection-status disconnected" id="collectionStatus">📈 数据收集: 未开始</div>
         <div class="firebase-status disconnected" id="firebaseStatus">🔥 Firebase: 未连接</div>
-        <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin: 6px 0 0 0; padding: 4px; font-size: 10px;">🧪 测试连接</button>
+        <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🧪 测试连接</button>
         <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">💾 强制保存</button>
         <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🔥 显示/隐藏热力图</button>
         <button class="btn test" onclick="testVideoCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">📹 测试视频截图</button>
@@ -817,6 +815,8 @@
             }
         }
 
+
+        
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
