@@ -62,9 +62,31 @@
         #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 30px; max-width: 800px; margin: 10px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        #statsPanel { position: fixed; top: 20px; right: 20px; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 10px; z-index: 2000; width: 280px; font-size: 12px; }
-        .stat-item { margin: 8px 0; display: flex; justify-content: space-between; }
-        .stat-value { font-weight: bold; color: #4CAF50; }
+        #statsPanel { 
+            position: fixed; 
+            top: 20px; 
+            right: 20px; 
+            background: rgba(0,0,0,0.85); 
+            color: white; 
+            padding: 8px 12px; 
+            border-radius: 8px; 
+            z-index: 2000; 
+            width: 240px; 
+            font-size: 11px; 
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+        .stat-item { 
+            margin: 6px 0; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .stat-value { 
+            font-weight: bold; 
+            color: #4CAF50; 
+            font-size: 10px;
+        }
         #debugPanel { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.9); color: #00ff00; padding: 15px; border-radius: 8px; z-index: 2000; max-width: 350px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; display: none; }
         .controls { text-align: center; margin: 20px 0; }
         .btn { background: #4CAF50; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; margin: 0 10px; font-size: 16px; transition: background 0.3s; }
@@ -113,12 +135,12 @@
         #Pt8{ bottom:2vw; left:50vw; }
         #Pt9{ bottom:2vw; right:2vw; }
 
-        #Accuracy { background-color: #222; color: white; padding: 8px; border-radius: 5px; text-align: center; }
-        .collection-status { margin-top: 10px; padding: 8px; border-radius: 5px; text-align: center; }
+        #Accuracy { background-color: #222; color: white; padding: 6px; border-radius: 4px; text-align: center; font-size: 11px; margin: 6px 0; }
+        .collection-status { margin-top: 8px; padding: 6px; border-radius: 4px; text-align: center; font-size: 10px; }
         .collection-status.connected { background: #4CAF50; color: white; }
         .collection-status.disconnected { background: #f44336; color: white; }
         .collection-status.uploading { background: #ff9800; color: white; }
-        .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 12px; }
+        .firebase-status { margin-top: 6px; padding: 6px; border-radius: 3px; text-align: center; font-size: 10px; }
         .heatmap-visible { visibility: visible !important; }
     </style>
 </head>
@@ -127,8 +149,8 @@
     <canvas id="plotting_canvas" width="500" height="500"></canvas>
 
     <div id="statsPanel">
-        <h4 style="margin: 0 0 10px 0; text-align: center; color: #4CAF50;">📊 眼动数据统计</h4>
-        <div class="stat-item"><span>会话ID:</span><span id="sessionIdDisplay" class="stat-value" style="font-size: 10px; word-break: break-all;"></span></div>
+        <h4 style="margin: 0 0 8px 0; text-align: center; color: #4CAF50; font-size: 13px;">📊 眼动数据统计</h4>
+        <div class="stat-item"><span>会话ID:</span><span id="sessionIdDisplay" class="stat-value" style="font-size: 9px; word-break: break-all;"></span></div>
         <div class="stat-item"><span>注视点总数:</span><span id="totalGazes" class="stat-value">0</span></div>
         <div class="stat-item"><span>眼跳次数:</span><span id="saccadeCount" class="stat-value">0</span></div>
         <div class="stat-item"><span>注视次数:</span><span id="fixationCount" class="stat-value">0</span></div>
@@ -140,11 +162,11 @@
         <div class="stat-item"><span>系统状态:</span><span id="systemStatus" class="stat-value">加载中</span></div>
         <div class="collection-status disconnected" id="collectionStatus">📈 数据收集: 未开始</div>
         <div class="firebase-status disconnected" id="firebaseStatus">🔥 Firebase: 未连接</div>
-        <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin: 8px 0 0 0; padding: 6px; font-size: 12px;">🧪 测试连接</button>
-        <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">💾 强制保存</button>
-        <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🔥 显示/隐藏热力图</button>
-        <button class="btn test" onclick="testVideoCapture()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">📹 测试视频截图</button>
-        <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 5px; padding: 6px; font-size: 12px;">🐛 显示调试</button>
+        <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin: 6px 0 0 0; padding: 4px; font-size: 10px;">🧪 测试连接</button>
+        <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">💾 强制保存</button>
+        <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🔥 显示/隐藏热力图</button>
+        <button class="btn test" onclick="testVideoCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">📹 测试视频截图</button>
+        <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🐛 显示调试</button>
     </div>
 
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
