@@ -140,6 +140,30 @@
         .collection-status.uploading { background: #ff9800; color: white; }
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 10px; }
         .heatmap-visible { visibility: visible !important; }
+        
+        /* 视频时间戳覆盖层 - 仅在热力图截图时可见 */
+        #videoInfoOverlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 10000;
+            pointer-events: none;
+            visibility: hidden; /* 默认隐藏，用户看不到 */
+        }
+        
+        /* 全屏时的视频容器 */
+        .video-container {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
@@ -191,14 +215,19 @@
         </div>
 
         <div style="text-align: center; margin: 20px 0; padding: 15px; background: #f2f2f2; border-radius: 8px;">
-            <video 
-                id="eyeTrackingVideoPlayer" 
-                src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
-                width="100%" 
-                crossorigin="anonymous"
-                preload="auto"
-                style="border-radius: 8px; background: #000; max-height: 400px;"
-            ></video>
+            <div class="video-container">
+                <video 
+                    id="eyeTrackingVideoPlayer" 
+                    src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1757416692/%E9%99%A4%E8%9E%A8%E4%BB%AA_bzhlgy.mp4" 
+                    width="100%" 
+                    crossorigin="anonymous"
+                    preload="auto"
+                    style="border-radius: 8px; background: #000; max-height: 400px;"
+                ></video>
+                <div id="videoInfoOverlay">
+                    用户: <span id="overlayUserId"></span> | 时间: <span id="overlayTimestamp">0.00s</span>
+                </div>
+            </div>
             <div style="margin-top: 10px;">
                 <button class="btn" id="playVideoBtn" onclick="startVideoExperiment()" style="font-size: 18px; padding: 15px 30px;">▶️ 开始视频实验</button>
             </div>
@@ -226,6 +255,9 @@
         let autoSaveInterval = null, heatmapSnapshotInterval = null, statsUpdateInterval = null;
 
         document.getElementById('sessionIdDisplay').textContent = sessionId;
+        
+        // 初始化视频信息覆盖层
+        document.getElementById('overlayUserId').textContent = userId;
         
         // ===========================================
         // 核心系统函数
@@ -306,15 +338,18 @@
             videoPlayer.onplay = () => {
                 debug(`视频开始播放，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
                 isVideoExperimentActive = true;
+                startVideoInfoUpdate(); // 开始更新视频信息显示
             };
             
             videoPlayer.onpause = () => {
                 debug(`视频已暂停，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
+                stopVideoInfoUpdate(); // 停止更新视频信息显示
             };
 
             videoPlayer.onended = () => {
                 debug('视频播放结束');
                 isVideoExperimentActive = false;
+                stopVideoInfoUpdate(); // 停止更新视频信息显示
                 exitFullscreen();
                 swal('实验结束', '视频播放已结束，眼动数据收集完成！', 'success');
             };
@@ -332,6 +367,29 @@
             });
 
             debug("视频播放器已准备就绪。");
+        }
+
+        // 视频信息更新相关函数
+        let videoInfoInterval = null;
+
+        function startVideoInfoUpdate() {
+            if (videoInfoInterval) clearInterval(videoInfoInterval);
+            videoInfoInterval = setInterval(updateVideoInfo, 100); // 每100ms更新一次
+        }
+
+        function stopVideoInfoUpdate() {
+            if (videoInfoInterval) {
+                clearInterval(videoInfoInterval);
+                videoInfoInterval = null;
+            }
+        }
+
+        function updateVideoInfo() {
+            const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            const timestampElement = document.getElementById('overlayTimestamp');
+            if (videoPlayer && timestampElement) {
+                timestampElement.textContent = videoPlayer.currentTime.toFixed(2) + 's';
+            }
         }
 
         // 开始视频实验
@@ -540,9 +598,15 @@
         
         async function captureHeatmapSnapshot() {
             const heatmapContainer = document.getElementById('heatmapContainer');
+            const videoInfoOverlay = document.getElementById('videoInfoOverlay');
             const originalVisibility = heatmapContainer.style.visibility;
+            const originalOverlayVisibility = videoInfoOverlay.style.visibility;
+            
             try {
                 heatmapContainer.style.visibility = 'hidden';
+                // 在截图时暂时显示视频信息覆盖层
+                videoInfoOverlay.style.visibility = 'visible';
+                
                 debug('正在截取背景页面 (用户所见)...');
                 
                 const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
@@ -652,15 +716,42 @@
                 debug('正在叠加热力图...');
                 screenshotCtx.drawImage(heatmapCanvas, 0, 0);
                 
+                // 4.5. 在热力图上添加时间戳和用户ID信息（仅在热力图中显示，用户看不到）
+                const currentVideoTime = originalVideo.currentTime;
+                screenshotCtx.font = 'bold 16px Arial';
+                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                screenshotCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+                screenshotCtx.lineWidth = 2;
+                
+                // 添加背景框
+                const infoText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s`;
+                const textMetrics = screenshotCtx.measureText(infoText);
+                const textWidth = textMetrics.width;
+                const textHeight = 20;
+                const padding = 8;
+                
+                screenshotCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                screenshotCtx.fillRect(10, 10, textWidth + padding * 2, textHeight + padding);
+                
+                // 添加文字
+                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                screenshotCtx.fillText(infoText, 10 + padding, 10 + padding + 14);
+                
                 // 5. 转换为图片并上传
                 const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.9);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
+                
+                // 使用用户ID + 视频时间戳命名热力图
+                const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s`;
+                
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
                 formData.append('folder', `heatmaps/${userId}/${sessionId}`);
+                formData.append('public_id', heatmapFileName); // 自定义文件名
+                
                 const response = await fetch(url, { method: 'POST', body: formData });
                 if (!response.ok) {
                     const errorData = await response.json();
@@ -668,11 +759,7 @@
                 }
                 const data = await response.json();
                 const secureUrl = data.secure_url;
-                debug(`合并热力图上传成功: ${secureUrl}`);
-                
-                // 使用用户ID + 视频时间戳命名热力图
-                const videoTimestamp = originalVideo.currentTime;
-                const heatmapFileName = `${userId}_${videoTimestamp.toFixed(2)}s`;
+                debug(`合并热力图上传成功: ${secureUrl}, 文件名: ${heatmapFileName}`);
                 
                 eyeTrackingData.heatmapSnapshots.push({ 
                     timestamp: new Date().toISOString(), 
@@ -680,7 +767,7 @@
                     provider: 'cloudinary', 
                     sessionId, 
                     userId,
-                    videoTimestamp: videoTimestamp,
+                    videoTimestamp: currentVideoTime,
                     videoFrameCaptured: videoFrameDrawn,
                     method: 'manual_composition',
                     fileName: heatmapFileName
@@ -692,6 +779,8 @@
                 debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
             } finally {
                 heatmapContainer.style.visibility = originalVisibility;
+                // 恢复视频信息覆盖层的原始可见性（隐藏状态）
+                videoInfoOverlay.style.visibility = originalOverlayVisibility;
             }
         }
 
