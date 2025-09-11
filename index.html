@@ -24,7 +24,7 @@
         const db = firebase.firestore();
         
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        const userId = 'index_video_test'; // 使用一个特定的用户ID
+        const userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6); // 生成唯一用户ID
         console.log('会话ID:', sessionId);
         console.log('用户ID:', userId);
 
@@ -426,6 +426,27 @@
                 isVideoExperimentActive = true;
                 debug('视频实验已开始，开始记录眼动数据');
                 
+                // 重置数据计数器和统计信息，确保数据只在视频播放时记录
+                gazeCount = 0;
+                saccadeCount = 0;
+                fixationCount = 0;
+                totalFixationTime = 0;
+                heatmapSnapshotCount = 0;
+                
+                // 清空之前的数据，确保只记录视频播放期间的数据
+                eyeTrackingData.gazePoints = [];
+                eyeTrackingData.saccades = [];
+                eyeTrackingData.fixations = [];
+                eyeTrackingData.heatmapSnapshots = [];
+                
+                // 重置热力图
+                if (heatmapInstance) {
+                    heatmapInstance.setData({data: [], max: 1});
+                }
+                
+                updateStatsDisplay();
+                debug('已重置所有数据统计，开始记录视频观看期间的眼动数据');
+                
             } catch (error) {
                 console.error('启动视频实验失败:', error);
                 debug(`启动视频实验失败: ${error.message}`);
@@ -522,12 +543,15 @@
         // 眼动数据处理
         // ===========================================
         function gazeDataCallback(data, elapsedTime) {
-            // 如果正在校准或未启动跟踪，则不记录数据
-            if (!isTracking || isCalibrating || !data || typeof data.x !== 'number' || typeof data.y !== 'number' || isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) return;
+            // 只有在视频实验进行中且不在校准时才记录数据
+            if (!isTracking || isCalibrating || !isVideoExperimentActive || !data || typeof data.x !== 'number' || typeof data.y !== 'number' || isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) return;
             
             const timestamp = new Date().toISOString();
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             const videoRect = videoPlayer.getBoundingClientRect();
+
+            // 使用视频时间戳作为注视时间
+            const videoTimestamp = videoPlayer ? parseFloat(videoPlayer.currentTime.toFixed(4)) : 0;
 
             let gazePoint = { 
                 x: Math.floor(data.x), 
@@ -536,17 +560,14 @@
                 elapsedTime: elapsedTime || Date.now() - startTime, 
                 sessionId, 
                 userId,
-                videoTimestamp: null,
+                videoTimestamp: videoTimestamp, // 视频时间戳作为注视时间
                 relativeX: null,
                 relativeY: null,
-                isVideoActive: isVideoExperimentActive
+                isVideoActive: true // 只在视频播放时记录
             };
 
-            // 检查视频是否正在播放，以关联眼动数据和视频时间戳
-            if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
-                gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
-                
-                // 计算相对于视频播放器的坐标
+            // 计算相对于视频播放器的坐标
+            if (videoPlayer && videoRect) {
                 const relX = gazePoint.x - videoRect.left;
                 const relY = gazePoint.y - videoRect.top;
 
@@ -564,40 +585,72 @@
         }
 
         function processSaccadeAndFixation(gazePoint) {
-            // 校准期间不处理眼跳和注视数据
-            if (isCalibrating) return;
+            // 只在视频实验进行中且不在校准时处理眼跳和注视数据
+            if (isCalibrating || !isVideoExperimentActive) return;
             
             if (!lastGazePoint) {
                 lastGazePoint = gazePoint;
-                currentFixation = { startPoint: {...gazePoint}, startTime: gazePoint.timestamp, pointCount: 1, sessionId, userId, isVideoActive: isVideoExperimentActive };
+                currentFixation = { 
+                    startPoint: {...gazePoint}, 
+                    startTime: gazePoint.timestamp, 
+                    startVideoTime: gazePoint.videoTimestamp, // 记录开始时的视频时间戳
+                    pointCount: 1, 
+                    sessionId, 
+                    userId, 
+                    isVideoActive: true 
+                };
                 return;
             }
+            
             const distance = Math.sqrt(Math.pow(gazePoint.x - lastGazePoint.x, 2) + Math.pow(gazePoint.y - lastGazePoint.y, 2));
+            
             if (distance > fixationThreshold) {
+                // 结束当前注视，开始新的注视
                 if (currentFixation && currentFixation.pointCount > 1) {
                     const duration = new Date(gazePoint.timestamp).getTime() - new Date(currentFixation.startTime).getTime();
                     if (duration > fixationTimeThreshold) {
                         currentFixation.duration = duration;
                         currentFixation.endPoint = {...lastGazePoint};
-                        currentFixation.centerPoint = { x: Math.round((currentFixation.startPoint.x + currentFixation.endPoint.x) / 2), y: Math.round((currentFixation.startPoint.y + currentFixation.endPoint.y) / 2) };
+                        currentFixation.endVideoTime = lastGazePoint.videoTimestamp; // 记录结束时的视频时间戳
+                        currentFixation.centerPoint = { 
+                            x: Math.round((currentFixation.startPoint.x + currentFixation.endPoint.x) / 2), 
+                            y: Math.round((currentFixation.startPoint.y + currentFixation.endPoint.y) / 2) 
+                        };
                         eyeTrackingData.fixations.push({...currentFixation});
                         fixationCount++;
                         totalFixationTime += duration;
+                        debug(`记录注视: 开始时间${currentFixation.startVideoTime}s, 结束时间${currentFixation.endVideoTime}s, 持续${duration}ms`);
                     }
                 }
+                
+                // 记录眼跳
                 const saccadeDuration = new Date(gazePoint.timestamp).getTime() - new Date(lastGazePoint.timestamp).getTime();
-                eyeTrackingData.saccades.push({ 
+                const saccade = { 
                     startPoint: {...lastGazePoint}, 
                     endPoint: {...gazePoint}, 
+                    startVideoTime: lastGazePoint.videoTimestamp, // 眼跳开始时的视频时间戳
+                    endVideoTime: gazePoint.videoTimestamp, // 眼跳结束时的视频时间戳
                     distance: Math.round(distance), 
                     duration: saccadeDuration, 
                     velocity: saccadeDuration > 0 ? Math.round(distance / saccadeDuration * 1000) : 0, 
                     sessionId, 
                     userId,
-                    isVideoActive: isVideoExperimentActive
-                });
+                    isVideoActive: true
+                };
+                eyeTrackingData.saccades.push(saccade);
                 saccadeCount++;
-                currentFixation = { startPoint: {...gazePoint}, startTime: gazePoint.timestamp, pointCount: 1, sessionId, userId, isVideoActive: isVideoExperimentActive };
+                debug(`记录眼跳: 从${saccade.startVideoTime}s到${saccade.endVideoTime}s, 距离${distance}px`);
+                
+                // 开始新的注视
+                currentFixation = { 
+                    startPoint: {...gazePoint}, 
+                    startTime: gazePoint.timestamp, 
+                    startVideoTime: gazePoint.videoTimestamp, // 记录开始时的视频时间戳
+                    pointCount: 1, 
+                    sessionId, 
+                    userId, 
+                    isVideoActive: true 
+                };
             } else {
                 if (currentFixation) currentFixation.pointCount++;
             }
@@ -615,7 +668,12 @@
         
         function startHeatmapSnapshots() {
             if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval);
-            heatmapSnapshotInterval = setInterval(() => { if (heatmapInstance && isTracking) captureHeatmapSnapshot(); }, 2000);
+            // 只在视频实验进行时截取热力图
+            heatmapSnapshotInterval = setInterval(() => { 
+                if (heatmapInstance && isTracking && isVideoExperimentActive) {
+                    captureHeatmapSnapshot(); 
+                }
+            }, 2000);
         }
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
@@ -736,6 +794,10 @@
                     method: 'html2canvas_with_overlay',
                     fileName: heatmapFileName
                 });
+                
+                // 热力图数据不保存到Firebase，只上传到Cloudinary
+                debug(`热力图快照已保存到Cloudinary，文件名: ${heatmapFileName}`);
+                
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
             } catch (error) {
@@ -755,35 +817,6 @@
         }
 
         function stopAutoSave() { if (autoSaveInterval) clearInterval(autoSaveInterval); }
-
-        async function saveEyeTrackingData(isManual = false) {
-            if (!firebaseConnected) { if(isManual) swal('错误', 'Firebase未连接，无法保存。', 'error'); return; }
-            const totalPoints = eyeTrackingData.gazePoints.length + eyeTrackingData.saccades.length + eyeTrackingData.fixations.length + eyeTrackingData.heatmapSnapshots.length;
-            if (totalPoints === 0) { if(isManual) swal('提示', '没有新数据可保存。', 'info'); return; }
-
-            const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
-            const payload = { sessionId, userId, timestamp: new Date().toISOString(), dataType: isManual ? 'manual' : 'auto', gazeData: dataToSave.gazePoints, saccadeData: dataToSave.saccades, fixationData: dataToSave.fixations, heatmapData: dataToSave.heatmapSnapshots, calibrationInfo: dataToSave.calibrationData };
-            
-            eyeTrackingData.gazePoints = []; eyeTrackingData.saccades = []; eyeTrackingData.fixations = []; eyeTrackingData.heatmapSnapshots = [];
-            
-            updateCollectionStatus('保存中...', 'uploading');
-            try {
-                await db.collection("eye_tracking_comprehensive_v3_storage").add(payload);
-                snapshotCount++;
-                updateCollectionStatus('进行中 (自动)', 'connected');
-                debug(`数据快照 #${snapshotCount} 保存成功`);
-                if(isManual) swal('成功', `数据已保存！`, 'success');
-            } catch (error) {
-                console.error("Firebase 保存失败: ", error);
-                debug(`数据保存失败: ${error.message}, 正在恢复数据...`);
-                updateCollectionStatus('保存失败', 'disconnected');
-                if(isManual) swal('失败', `数据保存失败！\n\n${error.message}`, 'error');
-                eyeTrackingData.gazePoints = dataToSave.gazePoints.concat(eyeTrackingData.gazePoints);
-                eyeTrackingData.saccades = dataToSave.saccades.concat(eyeTrackingData.saccades);
-                eyeTrackingData.fixations = dataToSave.fixations.concat(eyeTrackingData.fixations);
-                eyeTrackingData.heatmapSnapshots = dataToSave.heatmapSnapshots.concat(eyeTrackingData.heatmapSnapshots);
-            }
-        }
 
         // =======================================================================
         // 官方校准与百分比精度测试流程
