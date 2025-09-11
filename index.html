@@ -150,7 +150,7 @@
         
         /* 视频时间戳覆盖层 - 仅在热力图截图时可见 */
         #videoInfoOverlay {
-            position: absolute;
+            position: fixed; /* 改为 fixed 以确保在全屏时可见 */
             top: 10px;
             left: 10px;
             background: rgba(255, 0, 0, 0.9); /* 改为红色背景便于调试 */
@@ -160,7 +160,7 @@
             font-family: 'Courier New', monospace;
             font-size: 14px;
             font-weight: bold;
-            z-index: 1000;
+            z-index: 10000; /* 提高 z-index 确保在全屏时可见 */
             pointer-events: none;
             visibility: hidden; /* 默认隐藏，用户看不到 */
             border: 2px solid white; /* 添加白色边框便于识别 */
@@ -678,34 +678,64 @@
                 // 确保覆盖层内容是最新的
                 updateVideoInfo();
                 
-                debug(`正在截取背景页面，视频信息覆盖层可见性: ${videoInfoOverlay.style.visibility}`);
+                debug(`正在截取全屏页面，视频信息覆盖层可见性: ${videoInfoOverlay.style.visibility}`);
                 debug(`覆盖层内容: ${videoInfoOverlay.textContent}`);
                 
                 const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
+                const currentVideoTime = originalVideo.currentTime;
                 
-                // 创建一个专门的截图Canvas
+                // 创建一个全屏截图Canvas
                 const screenshotCanvas = document.createElement('canvas');
                 const screenshotCtx = screenshotCanvas.getContext('2d');
-                screenshotCanvas.width = window.innerWidth;
-                screenshotCanvas.height = window.innerHeight;
                 
-                // 等待一小段时间确保DOM更新
-                await new Promise(resolve => setTimeout(resolve, 100));
+                // 检测是否在全屏模式
+                const isFullscreen = document.fullscreenElement !== null;
                 
-                // 1. 先绘制背景（包含视频信息覆盖层的页面元素）
-                const pageCanvas = await html2canvas(document.body, {
-                    useCORS: true,
-                    allowTaint: true,
-                    logging: true, // 启用日志以便调试
-                    scale: 1,
-                    backgroundColor: '#f0f0f0',
-                    ignoreElements: (element) => {
-                        return element.id === 'heatmapContainer';
-                    }
-                });
-                
-                // 将页面背景绘制到截图canvas
-                screenshotCtx.drawImage(pageCanvas, 0, 0);
+                if (isFullscreen) {
+                    // 全屏模式：使用屏幕尺寸
+                    screenshotCanvas.width = screen.width;
+                    screenshotCanvas.height = screen.height;
+                    debug(`全屏模式截图Canvas尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
+                    
+                    // 截取整个文档元素
+                    const pageCanvas = await html2canvas(document.documentElement, {
+                        useCORS: true,
+                        allowTaint: true,
+                        logging: false,
+                        scale: 1,
+                        width: screen.width,
+                        height: screen.height,
+                        scrollX: 0,
+                        scrollY: 0,
+                        backgroundColor: '#000000',
+                        ignoreElements: (element) => {
+                            return element.id === 'heatmapContainer';
+                        }
+                    });
+                    
+                    // 将页面内容绘制到截图canvas
+                    screenshotCtx.drawImage(pageCanvas, 0, 0);
+                } else {
+                    // 非全屏模式：使用窗口尺寸
+                    screenshotCanvas.width = window.innerWidth;
+                    screenshotCanvas.height = window.innerHeight;
+                    debug(`窗口模式截图Canvas尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
+                    
+                    // 截取body元素
+                    const pageCanvas = await html2canvas(document.body, {
+                        useCORS: true,
+                        allowTaint: true,
+                        logging: false,
+                        scale: 1,
+                        backgroundColor: '#f0f0f0',
+                        ignoreElements: (element) => {
+                            return element.id === 'heatmapContainer';
+                        }
+                    });
+                    
+                    // 将页面内容绘制到截图canvas
+                    screenshotCtx.drawImage(pageCanvas, 0, 0);
+                }
                 
                 // 2. 获取热力图并叠加
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
@@ -713,11 +743,12 @@
                     throw new Error('无法找到 heatmap.js 的 canvas 元素！'); 
                 }
                 debug('正在叠加热力图...');
-                screenshotCtx.drawImage(heatmapCanvas, 0, 0);
                 
-                // 3. 在热力图上添加额外的时间戳和用户ID信息作为备份
-                const currentVideoTime = originalVideo.currentTime;
-                screenshotCtx.font = 'bold 18px Arial';
+                // 确保热力图尺寸与截图canvas匹配
+                screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                
+                // 3. 在热力图上添加时间戳和用户ID信息
+                screenshotCtx.font = 'bold 24px Arial';
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
                 screenshotCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
                 screenshotCtx.lineWidth = 3;
@@ -726,10 +757,10 @@
                 const backupInfoText = `${userId}_${currentVideoTime.toFixed(2)}s`;
                 const backupTextMetrics = screenshotCtx.measureText(backupInfoText);
                 const backupTextWidth = backupTextMetrics.width;
-                const backupTextHeight = 22;
-                const backupPadding = 10;
-                const backupX = screenshotCanvas.width - backupTextWidth - backupPadding * 2 - 20;
-                const backupY = 20;
+                const backupTextHeight = 30;
+                const backupPadding = 15;
+                const backupX = screenshotCanvas.width - backupTextWidth - backupPadding * 2 - 30;
+                const backupY = 30;
                 
                 // 添加背景框
                 screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
@@ -737,8 +768,8 @@
                 
                 // 添加文字
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
-                screenshotCtx.strokeText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 16);
-                screenshotCtx.fillText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 16);
+                screenshotCtx.strokeText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 20);
+                screenshotCtx.fillText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 20);
                 
                 // 4. 转换为图片并上传
                 const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.9);
@@ -749,7 +780,7 @@
                 // 使用用户ID + 视频时间戳命名热力图
                 const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s`;
                 
-                debug(`准备上传热力图，文件名: ${heatmapFileName}, 时间戳: ${currentVideoTime.toFixed(2)}s`);
+                debug(`准备上传全屏热力图，文件名: ${heatmapFileName}, 尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
                 
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
@@ -766,9 +797,9 @@
                 }
                 const data = await response.json();
                 const secureUrl = data.secure_url;
-                debug(`合并热力图上传成功: ${secureUrl}, 实际文件名: ${data.public_id || '未知'}`);
-                debug(`Cloudinary返回数据:`, JSON.stringify(data, null, 2));
+                debug(`全屏热力图上传成功: ${secureUrl}, 实际文件名: ${data.public_id || '未知'}`);
                 
+                // 只保存在本地数据中，不上传到Firebase
                 eyeTrackingData.heatmapSnapshots.push({ 
                     timestamp: new Date().toISOString(), 
                     storageUrl: secureUrl, 
@@ -776,43 +807,21 @@
                     sessionId, 
                     userId,
                     videoTimestamp: currentVideoTime,
-                    videoFrameCaptured: true, // html2canvas成功捕获了页面
-                    method: 'html2canvas_with_overlay',
-                    fileName: heatmapFileName
+                    videoFrameCaptured: true,
+                    method: 'fullscreen_html2canvas',
+                    fileName: heatmapFileName,
+                    imageSize: `${screenshotCanvas.width}x${screenshotCanvas.height}`
                 });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
                 
-                // 同时将热力图信息保存到单独的Firebase集合
-                await saveHeatmapDataToFirebase({
-                    timestamp: new Date().toISOString(),
-                    sessionId,
-                    userId,
-                    videoTimestamp: currentVideoTime,
-                    cloudinaryUrl: secureUrl,
-                    fileName: heatmapFileName,
-                    method: 'html2canvas_with_overlay'
-                });
-                
             } catch (error) {
-                console.error("捕获或上传合并的热力图快照时出错: ", error);
-                debug(`捕获或上传合并的热力图快照时出错: ${error.message}`);
+                console.error("捕获或上传全屏热力图快照时出错: ", error);
+                debug(`捕获或上传全屏热力图快照时出错: ${error.message}`);
             } finally {
                 heatmapContainer.style.visibility = originalVisibility;
                 // 恢复视频信息覆盖层的原始可见性（隐藏状态）
                 videoInfoOverlay.style.visibility = originalOverlayVisibility;
-            }
-        }
-
-        // 专门保存热力图数据到Firebase的函数
-        async function saveHeatmapDataToFirebase(heatmapData) {
-            if (!firebaseConnected) return;
-            try {
-                await db.collection("video_heatmap_snapshots_v1").add(heatmapData);
-                debug(`热力图数据已保存到Firebase: ${heatmapData.fileName}`);
-            } catch (error) {
-                console.error("保存热力图数据到Firebase失败:", error);
-                debug(`保存热力图数据失败: ${error.message}`);
             }
         }
 
@@ -1122,6 +1131,16 @@
             if (isTracking && eyeTrackingData.gazePoints.length > 0) {
                 const message = '您有未保存的数据，确定要离开吗？';
                 e.returnValue = message; return message;
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (isTracking && webgazer) {
+                document.visibilityState === 'hidden' ? webgazer.pause() : webgazer.resume();
+            }
+        });
+    </script>
+</body>
+</html>
             }
         });
         document.addEventListener('visibilitychange', () => {
