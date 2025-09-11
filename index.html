@@ -200,6 +200,7 @@
         <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🐛 显示调试</button>
         <button class="btn test" onclick="testOverlayVisibility()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">👁️ 测试覆盖层</button>
         <button class="btn test" onclick="testDataCollection()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">📊 测试数据收集</button>
+        <button class="btn test" onclick="testFullscreenCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🎬 测试全屏截图</button>
     </div>
 
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
@@ -470,9 +471,38 @@
                     await element.msRequestFullscreen();
                 }
                 debug('已进入全屏模式');
+                
+                // 全屏后需要重新初始化热力图以匹配新的尺寸
+                setTimeout(() => {
+                    updateHeatmapForFullscreen();
+                }, 500);
+                
             } catch (error) {
                 debug(`全屏模式失败: ${error.message}`);
                 throw error;
+            }
+        }
+
+        // 更新热力图配置以适应全屏
+        function updateHeatmapForFullscreen() {
+            if (heatmapInstance) {
+                debug(`更新热力图配置为全屏尺寸: ${window.innerWidth}x${window.innerHeight}`);
+                
+                // 获取热力图容器并更新其尺寸
+                const heatmapContainer = document.getElementById('heatmapContainer');
+                heatmapContainer.style.width = window.innerWidth + 'px';
+                heatmapContainer.style.height = window.innerHeight + 'px';
+                
+                // 重新创建热力图实例以适应新尺寸
+                heatmapInstance = h337.create({ 
+                    container: heatmapContainer, 
+                    radius: Math.max(25, window.innerWidth / 50), // 根据屏幕大小调整半径
+                    maxOpacity: 0.7, 
+                    minOpacity: 0.1, 
+                    blur: 0.8 
+                });
+                
+                debug('热力图已更新为全屏配置');
             }
         }
 
@@ -614,6 +644,29 @@
             swal('测试完成', `已添加测试数据并尝试保存：\n注视点: ${eyeTrackingData.gazePoints.length}\n眼跳: ${eyeTrackingData.saccades.length}\n注视: ${eyeTrackingData.fixations.length}`, 'info');
         }
 
+        // 测试全屏截图功能
+        function testFullscreenCapture() {
+            const isFullscreen = document.fullscreenElement !== null || 
+                               document.webkitFullscreenElement !== null || 
+                               document.mozFullScreenElement !== null ||
+                               document.msFullscreenElement !== null;
+            
+            if (!isFullscreen) {
+                swal('提示', '请先进入全屏模式（点击"开始视频实验"按钮）再测试截图功能', 'info');
+                return;
+            }
+            
+            debug('开始测试全屏截图功能...');
+            
+            // 立即触发一次热力图截图
+            if (heatmapInstance && isTracking && isVideoExperimentActive) {
+                captureHeatmapSnapshot();
+                swal('测试', '已触发全屏热力图截图，请查看调试信息和Cloudinary', 'info');
+            } else {
+                swal('错误', '请确保眼动追踪已启动且视频实验正在进行', 'error');
+            }
+        }
+
         // ===========================================
         // 眼动数据处理
         // ===========================================
@@ -623,13 +676,15 @@
             
             // 只有在视频实验激活时才记录数据
             if (!isVideoExperimentActive) {
-                debug('视频实验未激活，跳过数据记录');
-                return;
+                return; // 移除调试信息以减少日志噪音
             }
             
             const timestamp = new Date().toISOString();
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
-            const videoRect = videoPlayer.getBoundingClientRect();
+            const isFullscreen = document.fullscreenElement !== null || 
+                               document.webkitFullscreenElement !== null || 
+                               document.mozFullScreenElement !== null ||
+                               document.msFullscreenElement !== null;
 
             let gazePoint = { 
                 x: Math.floor(data.x), 
@@ -641,23 +696,34 @@
                 videoTimestamp: null,
                 relativeX: null,
                 relativeY: null,
-                isVideoActive: isVideoExperimentActive
+                isVideoActive: isVideoExperimentActive,
+                isFullscreen: isFullscreen
             };
 
             // 检查视频是否正在播放，以关联眼动数据和视频时间戳
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
                 
-                // 计算相对于视频播放器的坐标
-                const relX = gazePoint.x - videoRect.left;
-                const relY = gazePoint.y - videoRect.top;
+                if (isFullscreen) {
+                    // 全屏模式：眼动坐标直接对应屏幕坐标
+                    gazePoint.relativeX = gazePoint.x;
+                    gazePoint.relativeY = gazePoint.y;
+                } else {
+                    // 窗口模式：计算相对于视频播放器的坐标
+                    const videoRect = videoPlayer.getBoundingClientRect();
+                    const relX = gazePoint.x - videoRect.left;
+                    const relY = gazePoint.y - videoRect.top;
 
-                if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
-                    gazePoint.relativeX = Math.floor(relX);
-                    gazePoint.relativeY = Math.floor(relY);
+                    if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
+                        gazePoint.relativeX = Math.floor(relX);
+                        gazePoint.relativeY = Math.floor(relY);
+                    }
                 }
                 
-                debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s`);
+                // 只在每100个点时输出一次调试信息
+                if (gazeCount % 100 === 0) {
+                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${isFullscreen}`);
+                }
             }
 
             processSaccadeAndFixation(gazePoint);
@@ -761,19 +827,6 @@
             const originalOverlayVisibility = videoInfoOverlay.style.visibility;
             
             try {
-                heatmapContainer.style.visibility = 'hidden';
-                // 在截图时暂时显示视频信息覆盖层
-                videoInfoOverlay.style.visibility = 'visible';
-                
-                // 确保覆盖层内容是最新的
-                updateVideoInfo();
-                
-                debug(`正在截取全屏页面，视频信息覆盖层可见性: ${videoInfoOverlay.style.visibility}`);
-                debug(`覆盖层内容: ${videoInfoOverlay.textContent}`);
-                
-                const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
-                const currentVideoTime = originalVideo.currentTime;
-                
                 // 检测是否在全屏模式
                 const isFullscreen = document.fullscreenElement !== null || 
                                    document.webkitFullscreenElement !== null || 
@@ -781,93 +834,108 @@
                                    document.msFullscreenElement !== null;
                 
                 debug(`全屏状态检测: ${isFullscreen}`);
-                debug(`document.fullscreenElement: ${document.fullscreenElement}`);
                 debug(`window.innerWidth: ${window.innerWidth}, window.innerHeight: ${window.innerHeight}`);
                 debug(`screen.width: ${screen.width}, screen.height: ${screen.height}`);
                 
-                // 等待一小段时间确保DOM更新
-                await new Promise(resolve => setTimeout(resolve, 200));
+                // 如果不在全屏模式，跳过截图
+                if (!isFullscreen) {
+                    debug('不在全屏模式，跳过热力图截图');
+                    return;
+                }
                 
-                // 创建截图Canvas - 始终使用全屏尺寸
+                const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
+                const currentVideoTime = originalVideo.currentTime;
+                
+                // 创建截图Canvas - 使用实际全屏尺寸
                 const screenshotCanvas = document.createElement('canvas');
                 const screenshotCtx = screenshotCanvas.getContext('2d');
+                screenshotCanvas.width = window.innerWidth;
+                screenshotCanvas.height = window.innerHeight;
                 
-                // 如果在全屏或窗口接近全屏，使用屏幕尺寸
-                if (isFullscreen || (window.innerWidth >= screen.width * 0.9 && window.innerHeight >= screen.height * 0.9)) {
-                    screenshotCanvas.width = screen.width;
-                    screenshotCanvas.height = screen.height;
-                    debug(`使用屏幕尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
+                debug(`截图Canvas尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
+                
+                // 1. 绘制黑色背景
+                screenshotCtx.fillStyle = '#000000';
+                screenshotCtx.fillRect(0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                
+                // 2. 直接绘制视频内容到全屏Canvas
+                if (originalVideo && !originalVideo.paused && originalVideo.videoWidth > 0 && originalVideo.videoHeight > 0) {
+                    // 计算视频在全屏中的显示尺寸（保持宽高比）
+                    const videoAspect = originalVideo.videoWidth / originalVideo.videoHeight;
+                    const screenAspect = screenshotCanvas.width / screenshotCanvas.height;
                     
-                    // 截取整个文档
-                    const pageCanvas = await html2canvas(document.documentElement, {
-                        useCORS: true,
-                        allowTaint: true,
-                        logging: false,
-                        scale: 1,
-                        width: screen.width,
-                        height: screen.height,
-                        x: 0,
-                        y: 0,
-                        scrollX: 0,
-                        scrollY: 0,
-                        backgroundColor: '#000000',
-                        ignoreElements: (element) => {
-                            return element.id === 'heatmapContainer' ||
-                                   element.id === 'statsPanel' ||
-                                   element.id === 'debugPanel' ||
-                                   element.classList.contains('Calibration');
-                        }
-                    });
+                    let drawWidth, drawHeight, drawX, drawY;
                     
-                    screenshotCtx.drawImage(pageCanvas, 0, 0);
+                    if (videoAspect > screenAspect) {
+                        // 视频更宽，以宽度为准
+                        drawWidth = screenshotCanvas.width;
+                        drawHeight = screenshotCanvas.width / videoAspect;
+                        drawX = 0;
+                        drawY = (screenshotCanvas.height - drawHeight) / 2;
+                    } else {
+                        // 视频更高，以高度为准
+                        drawHeight = screenshotCanvas.height;
+                        drawWidth = screenshotCanvas.height * videoAspect;
+                        drawX = (screenshotCanvas.width - drawWidth) / 2;
+                        drawY = 0;
+                    }
+                    
+                    debug(`视频绘制区域: ${drawX}, ${drawY}, ${drawWidth}x${drawHeight}`);
+                    
+                    // 绘制视频帧
+                    screenshotCtx.drawImage(originalVideo, drawX, drawY, drawWidth, drawHeight);
                 } else {
-                    // 窗口模式
-                    screenshotCanvas.width = window.innerWidth;
-                    screenshotCanvas.height = window.innerHeight;
-                    debug(`使用窗口尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
-                    
-                    const pageCanvas = await html2canvas(document.body, {
-                        useCORS: true,
-                        allowTaint: true,
-                        logging: false,
-                        scale: 1,
-                        backgroundColor: '#f0f0f0',
-                        ignoreElements: (element) => {
-                            return element.id === 'heatmapContainer' ||
-                                   element.id === 'statsPanel' ||
-                                   element.id === 'debugPanel' ||
-                                   element.classList.contains('Calibration');
-                        }
-                    });
-                    
-                    screenshotCtx.drawImage(pageCanvas, 0, 0);
+                    debug('视频未在播放或尺寸无效，绘制占位符');
+                    // 绘制占位符
+                    screenshotCtx.fillStyle = '#333333';
+                    screenshotCtx.fillRect(0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                    screenshotCtx.fillStyle = '#FFFFFF';
+                    screenshotCtx.font = 'bold 48px Arial';
+                    screenshotCtx.textAlign = 'center';
+                    screenshotCtx.fillText('视频内容', screenshotCanvas.width / 2, screenshotCanvas.height / 2);
                 }
                 
-                // 获取热力图并叠加
+                // 3. 获取热力图并叠加
+                heatmapContainer.style.visibility = 'hidden';
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
-                if (!heatmapCanvas) { 
-                    throw new Error('无法找到 heatmap.js 的 canvas 元素！'); 
+                if (heatmapCanvas && heatmapCanvas.width > 0 && heatmapCanvas.height > 0) {
+                    debug(`热力图Canvas尺寸: ${heatmapCanvas.width}x${heatmapCanvas.height}`);
+                    debug('正在叠加热力图...');
+                    
+                    // 调整热力图尺寸以匹配截图canvas，设置适当透明度
+                    screenshotCtx.globalAlpha = 0.8; // 设置热力图透明度
+                    screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                    screenshotCtx.globalAlpha = 1.0; // 恢复透明度
+                } else {
+                    debug('热力图Canvas无效或为空');
                 }
-                debug('正在叠加热力图...');
                 
-                // 调整热力图尺寸以匹配截图canvas
-                screenshotCtx.globalAlpha = 0.6; // 设置热力图透明度
-                screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                screenshotCtx.globalAlpha = 1.0; // 恢复透明度
+                // 4. 添加视频信息覆盖层
+                videoInfoOverlay.style.visibility = 'visible';
+                updateVideoInfo();
                 
-                // 添加时间戳和用户ID信息
-                screenshotCtx.font = 'bold 28px Arial';
+                // 手动绘制覆盖层信息
+                screenshotCtx.font = 'bold 24px Arial';
+                screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+                const overlayText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s`;
+                const overlayMetrics = screenshotCtx.measureText(overlayText);
+                screenshotCtx.fillRect(10, 10, overlayMetrics.width + 20, 40);
+                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
+                screenshotCtx.fillText(overlayText, 20, 35);
+                
+                // 5. 添加右上角备份信息
+                screenshotCtx.font = 'bold 32px Arial';
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
                 screenshotCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
                 screenshotCtx.lineWidth = 4;
                 
-                const backupInfoText = `${userId}_${currentVideoTime.toFixed(2)}s`;
+                const backupInfoText = `${userId}_${currentVideoTime.toFixed(2)}s_FULLSCREEN`;
                 const backupTextMetrics = screenshotCtx.measureText(backupInfoText);
                 const backupTextWidth = backupTextMetrics.width;
-                const backupTextHeight = 35;
-                const backupPadding = 20;
-                const backupX = screenshotCanvas.width - backupTextWidth - backupPadding * 2 - 50;
-                const backupY = 50;
+                const backupTextHeight = 40;
+                const backupPadding = 25;
+                const backupX = screenshotCanvas.width - backupTextWidth - backupPadding * 2 - 60;
+                const backupY = 60;
                 
                 // 添加背景框
                 screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.9)';
@@ -875,23 +943,23 @@
                 
                 // 添加文字
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
-                screenshotCtx.strokeText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 24);
-                screenshotCtx.fillText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 24);
+                screenshotCtx.strokeText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 28);
+                screenshotCtx.fillText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 28);
                 
-                // 转换为图片并上传
-                const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.9);
+                // 6. 转换为图片并上传
+                const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.95);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
                 
-                const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s`;
+                const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s_fullscreen_video`;
                 
-                debug(`准备上传热力图，文件名: ${heatmapFileName}, 尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
+                debug(`准备上传全屏视频热力图，文件名: ${heatmapFileName}, 尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
                 
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
-                formData.append('folder', `heatmaps/${userId}/${sessionId}`);
+                formData.append('folder', `fullscreen_video_heatmaps/${userId}/${sessionId}`);
                 formData.append('public_id', heatmapFileName);
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
@@ -901,7 +969,7 @@
                 }
                 const data = await response.json();
                 const secureUrl = data.secure_url;
-                debug(`热力图上传成功: ${secureUrl}, 实际文件名: ${data.public_id || '未知'}`);
+                debug(`全屏视频热力图上传成功: ${secureUrl}`);
                 
                 // 保存在本地数据中
                 eyeTrackingData.heatmapSnapshots.push({ 
@@ -912,17 +980,19 @@
                     userId,
                     videoTimestamp: currentVideoTime,
                     videoFrameCaptured: true,
-                    method: isFullscreen ? 'fullscreen_capture' : 'window_capture',
+                    method: 'direct_video_canvas_with_heatmap',
                     fileName: heatmapFileName,
                     imageSize: `${screenshotCanvas.width}x${screenshotCanvas.height}`,
-                    isFullscreen: isFullscreen
+                    isFullscreen: true,
+                    captureType: 'fullscreen_video_with_heatmap_overlay',
+                    videoDisplaySize: `${originalVideo.videoWidth}x${originalVideo.videoHeight}`
                 });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
                 
             } catch (error) {
-                console.error("捕获或上传热力图快照时出错: ", error);
-                debug(`捕获或上传热力图快照时出错: ${error.message}`);
+                console.error("捕获或上传全屏视频热力图快照时出错: ", error);
+                debug(`捕获或上传全屏视频热力图快照时出错: ${error.message}`);
             } finally {
                 heatmapContainer.style.visibility = originalVisibility;
                 videoInfoOverlay.style.visibility = originalOverlayVisibility;
