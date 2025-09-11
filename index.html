@@ -923,30 +923,7 @@
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
                 screenshotCtx.fillText(overlayText, 20, 35);
                 
-                // 5. 添加右上角备份信息
-                screenshotCtx.font = 'bold 32px Arial';
-                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-                screenshotCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-                screenshotCtx.lineWidth = 4;
-                
-                const backupInfoText = `${userId}_${currentVideoTime.toFixed(2)}s_FULLSCREEN`;
-                const backupTextMetrics = screenshotCtx.measureText(backupInfoText);
-                const backupTextWidth = backupTextMetrics.width;
-                const backupTextHeight = 40;
-                const backupPadding = 25;
-                const backupX = screenshotCanvas.width - backupTextWidth - backupPadding * 2 - 60;
-                const backupY = 60;
-                
-                // 添加背景框
-                screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.9)';
-                screenshotCtx.fillRect(backupX, backupY, backupTextWidth + backupPadding * 2, backupTextHeight + backupPadding);
-                
-                // 添加文字
-                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
-                screenshotCtx.strokeText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 28);
-                screenshotCtx.fillText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 28);
-                
-                // 6. 转换为图片并上传
+                // 5. 转换为图片并上传
                 const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.95);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
