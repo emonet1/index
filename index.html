@@ -599,6 +599,8 @@
         function PopUpInstruction() {
             if (!isTracking) return swal('提示', '请先启动眼动追踪。', 'info');
             document.getElementById('statsPanel').style.display = 'none';
+            // 隐藏控制按钮避免遮挡校准点
+            document.querySelector('.controls').style.display = 'none';
             ClearCanvas();
             swal({
                 title:"校准说明",
@@ -626,11 +628,19 @@
                 node.style.backgroundColor = 'yellow';
                 node.setAttribute('disabled', 'disabled');
                 PointCalibrate++;
-            }
-            if (PointCalibrate == 8) { document.getElementById('Pt5').style.display = 'block'; }
-            if (PointCalibrate >= 9) {
-                document.querySelectorAll('.Calibration').forEach((i) => { if(i.id !== 'Pt5') i.style.display = 'none'; });
-                calcAccuracy();
+                debug(`校准点 ${id} 完成，当前完成数量: ${PointCalibrate}`);
+                
+                // 前8个点点击完后，显示Pt5
+                if (PointCalibrate === 8) {
+                    document.getElementById('Pt5').style.display = 'block';
+                    debug('显示第9个校准点 Pt5');
+                }
+                // 只有Pt5点击完才进入精度计算
+                if (PointCalibrate === 9) {
+                    debug('所有校准点完成，开始精度计算');
+                    document.querySelectorAll('.Calibration').forEach((i) => { if(i.id !== 'Pt5') i.style.display = 'none'; });
+                    calcAccuracy();
+                }
             }
         }
 
@@ -660,6 +670,8 @@
                         buttons: { cancel: "重新校准", confirm: "接受" }
                     }).then(isConfirm => {
                         document.getElementById('statsPanel').style.display = 'block';
+                        // 恢复显示控制按钮
+                        document.querySelector('.controls').style.display = 'block';
                         if (isConfirm) {
                             ClearCanvas();
                             updateStatus('运行中', 'ready');
@@ -700,6 +712,8 @@
             ClearCalibration();
             ClearCanvas();
             updateStatus('准备重新校准', 'ready');
+            // 确保重新校准时也隐藏控制按钮
+            document.querySelector('.controls').style.display = 'none';
             PopUpInstruction();
         }
 
