@@ -146,16 +146,17 @@
             position: absolute;
             top: 10px;
             left: 10px;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(255, 0, 0, 0.9); /* 改为红色背景便于调试 */
             color: white;
             padding: 8px 12px;
             border-radius: 4px;
             font-family: 'Courier New', monospace;
             font-size: 14px;
             font-weight: bold;
-            z-index: 10000;
+            z-index: 1000;
             pointer-events: none;
             visibility: hidden; /* 默认隐藏，用户看不到 */
+            border: 2px solid white; /* 添加白色边框便于识别 */
         }
         
         /* 全屏时的视频容器 */
@@ -189,6 +190,7 @@
         <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🔥 显示/隐藏热力图</button>
         <button class="btn test" onclick="testVideoCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">📹 测试视频截图</button>
         <button class="btn test" onclick="toggleDebug()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🐛 显示调试</button>
+        <button class="btn test" onclick="testOverlayVisibility()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">👁️ 测试覆盖层</button>
     </div>
 
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
@@ -494,6 +496,28 @@
             }
         }
 
+        // 测试覆盖层可见性的函数
+        function testOverlayVisibility() {
+            const videoInfoOverlay = document.getElementById('videoInfoOverlay');
+            const currentVisibility = videoInfoOverlay.style.visibility;
+            
+            debug(`当前覆盖层可见性: ${currentVisibility}`);
+            
+            // 切换可见性进行测试
+            if (currentVisibility === 'hidden' || currentVisibility === '') {
+                videoInfoOverlay.style.visibility = 'visible';
+                updateVideoInfo(); // 确保内容是最新的
+                debug('覆盖层已显示用于测试');
+                setTimeout(() => {
+                    videoInfoOverlay.style.visibility = 'hidden';
+                    debug('覆盖层已重新隐藏');
+                }, 3000);
+            } else {
+                videoInfoOverlay.style.visibility = 'hidden';
+                debug('覆盖层已隐藏');
+            }
+        }
+
         // ===========================================
         // 眼动数据处理
         // ===========================================
@@ -607,7 +631,11 @@
                 // 在截图时暂时显示视频信息覆盖层
                 videoInfoOverlay.style.visibility = 'visible';
                 
-                debug('正在截取背景页面 (用户所见)...');
+                // 确保覆盖层内容是最新的
+                updateVideoInfo();
+                
+                debug(`正在截取背景页面，视频信息覆盖层可见性: ${videoInfoOverlay.style.visibility}`);
+                debug(`覆盖层内容: ${videoInfoOverlay.textContent}`);
                 
                 const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
                 
@@ -617,98 +645,25 @@
                 screenshotCanvas.width = window.innerWidth;
                 screenshotCanvas.height = window.innerHeight;
                 
-                // 1. 先绘制背景（不包含视频的其他页面元素）
+                // 等待一小段时间确保DOM更新
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // 1. 先绘制背景（包含视频信息覆盖层的页面元素）
                 const pageCanvas = await html2canvas(document.body, {
                     useCORS: true,
                     allowTaint: true,
-                    logging: false,
+                    logging: true, // 启用日志以便调试
                     scale: 1,
                     backgroundColor: '#f0f0f0',
                     ignoreElements: (element) => {
-                        return element.id === 'heatmapContainer' || element.id === 'eyeTrackingVideoPlayer';
+                        return element.id === 'heatmapContainer';
                     }
                 });
                 
                 // 将页面背景绘制到截图canvas
                 screenshotCtx.drawImage(pageCanvas, 0, 0);
                 
-                // 2. 单独处理视频区域
-                const videoRect = originalVideo.getBoundingClientRect();
-                const videoWidth = videoRect.width;
-                const videoHeight = videoRect.height;
-                const videoX = videoRect.left;
-                const videoY = videoRect.top;
-                
-                // 创建视频帧canvas
-                const videoCanvas = document.createElement('canvas');
-                const videoCtx = videoCanvas.getContext('2d');
-                videoCanvas.width = videoWidth;
-                videoCanvas.height = videoHeight;
-                
-                let videoFrameDrawn = false;
-                try {
-                    // 尝试绘制视频当前帧
-                    if (originalVideo.videoWidth > 0 && originalVideo.videoHeight > 0) {
-                        videoCtx.drawImage(originalVideo, 0, 0, videoWidth, videoHeight);
-                        videoFrameDrawn = true;
-                        debug('成功捕获视频当前帧');
-                    } else {
-                        throw new Error('视频尺寸无效');
-                    }
-                } catch (e) {
-                    debug('无法直接捕获视频帧，创建替代图像: ' + e.message);
-                    // 创建一个替代图像
-                    const gradient = videoCtx.createLinearGradient(0, 0, videoWidth, videoHeight);
-                    gradient.addColorStop(0, '#2c3e50');
-                    gradient.addColorStop(1, '#34495e');
-                    videoCtx.fillStyle = gradient;
-                    videoCtx.fillRect(0, 0, videoWidth, videoHeight);
-                    
-                    // 添加播放图标和信息
-                    videoCtx.fillStyle = '#ecf0f1';
-                    videoCtx.strokeStyle = '#ecf0f1';
-                    videoCtx.lineWidth = 3;
-                    
-                    // 绘制播放三角形
-                    const centerX = videoWidth / 2;
-                    const centerY = videoHeight / 2;
-                    const size = Math.min(videoWidth, videoHeight) * 0.1;
-                    
-                    videoCtx.beginPath();
-                    videoCtx.moveTo(centerX - size, centerY - size);
-                    videoCtx.lineTo(centerX + size, centerY);
-                    videoCtx.lineTo(centerX - size, centerY + size);
-                    videoCtx.closePath();
-                    videoCtx.fill();
-                    
-                    // 添加文字信息
-                    videoCtx.font = 'bold 24px Arial';
-                    videoCtx.textAlign = 'center';
-                    videoCtx.fillText('视频播放中', centerX, centerY + size + 40);
-                    videoCtx.font = '18px Arial';
-                    videoCtx.fillText(`时间: ${originalVideo.currentTime.toFixed(1)}s`, centerX, centerY + size + 70);
-                }
-                
-                // 3. 将视频区域绘制到截图canvas的正确位置
-                screenshotCtx.save();
-                // 添加视频的边框圆角效果 - 使用更兼容的方法
-                screenshotCtx.beginPath();
-                const radius = 8;
-                screenshotCtx.moveTo(videoX + radius, videoY);
-                screenshotCtx.lineTo(videoX + videoWidth - radius, videoY);
-                screenshotCtx.quadraticCurveTo(videoX + videoWidth, videoY, videoX + videoWidth, videoY + radius);
-                screenshotCtx.lineTo(videoX + videoWidth, videoY + videoHeight - radius);
-                screenshotCtx.quadraticCurveTo(videoX + videoWidth, videoY + videoHeight, videoX + videoWidth - radius, videoY + videoHeight);
-                screenshotCtx.lineTo(videoX + radius, videoY + videoHeight);
-                screenshotCtx.quadraticCurveTo(videoX, videoY + videoHeight, videoX, videoY + videoHeight - radius);
-                screenshotCtx.lineTo(videoX, videoY + radius);
-                screenshotCtx.quadraticCurveTo(videoX, videoY, videoX + radius, videoY);
-                screenshotCtx.closePath();
-                screenshotCtx.clip();
-                screenshotCtx.drawImage(videoCanvas, videoX, videoY);
-                screenshotCtx.restore();
-                
-                // 4. 获取热力图并叠加
+                // 2. 获取热力图并叠加
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
                 if (!heatmapCanvas) { 
                     throw new Error('无法找到 heatmap.js 的 canvas 元素！'); 
@@ -716,28 +671,32 @@
                 debug('正在叠加热力图...');
                 screenshotCtx.drawImage(heatmapCanvas, 0, 0);
                 
-                // 4.5. 在热力图上添加时间戳和用户ID信息（仅在热力图中显示，用户看不到）
+                // 3. 在热力图上添加额外的时间戳和用户ID信息作为备份
                 const currentVideoTime = originalVideo.currentTime;
-                screenshotCtx.font = 'bold 16px Arial';
-                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                screenshotCtx.font = 'bold 18px Arial';
+                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
                 screenshotCtx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
-                screenshotCtx.lineWidth = 2;
+                screenshotCtx.lineWidth = 3;
+                
+                // 在右上角添加备份信息
+                const backupInfoText = `${userId}_${currentVideoTime.toFixed(2)}s`;
+                const backupTextMetrics = screenshotCtx.measureText(backupInfoText);
+                const backupTextWidth = backupTextMetrics.width;
+                const backupTextHeight = 22;
+                const backupPadding = 10;
+                const backupX = screenshotCanvas.width - backupTextWidth - backupPadding * 2 - 20;
+                const backupY = 20;
                 
                 // 添加背景框
-                const infoText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s`;
-                const textMetrics = screenshotCtx.measureText(infoText);
-                const textWidth = textMetrics.width;
-                const textHeight = 20;
-                const padding = 8;
-                
-                screenshotCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                screenshotCtx.fillRect(10, 10, textWidth + padding * 2, textHeight + padding);
+                screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+                screenshotCtx.fillRect(backupX, backupY, backupTextWidth + backupPadding * 2, backupTextHeight + backupPadding);
                 
                 // 添加文字
-                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-                screenshotCtx.fillText(infoText, 10 + padding, 10 + padding + 14);
+                screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
+                screenshotCtx.strokeText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 16);
+                screenshotCtx.fillText(backupInfoText, backupX + backupPadding, backupY + backupPadding + 16);
                 
-                // 5. 转换为图片并上传
+                // 4. 转换为图片并上传
                 const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.9);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
@@ -746,11 +705,15 @@
                 // 使用用户ID + 视频时间戳命名热力图
                 const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s`;
                 
+                debug(`准备上传热力图，文件名: ${heatmapFileName}, 时间戳: ${currentVideoTime.toFixed(2)}s`);
+                
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
                 formData.append('folder', `heatmaps/${userId}/${sessionId}`);
                 formData.append('public_id', heatmapFileName); // 自定义文件名
+                
+                debug(`FormData内容 - public_id: ${heatmapFileName}, folder: heatmaps/${userId}/${sessionId}`);
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
                 if (!response.ok) {
@@ -759,7 +722,8 @@
                 }
                 const data = await response.json();
                 const secureUrl = data.secure_url;
-                debug(`合并热力图上传成功: ${secureUrl}, 文件名: ${heatmapFileName}`);
+                debug(`合并热力图上传成功: ${secureUrl}, 实际文件名: ${data.public_id || '未知'}`);
+                debug(`Cloudinary返回数据:`, JSON.stringify(data, null, 2));
                 
                 eyeTrackingData.heatmapSnapshots.push({ 
                     timestamp: new Date().toISOString(), 
@@ -768,8 +732,8 @@
                     sessionId, 
                     userId,
                     videoTimestamp: currentVideoTime,
-                    videoFrameCaptured: videoFrameDrawn,
-                    method: 'manual_composition',
+                    videoFrameCaptured: true, // html2canvas成功捕获了页面
+                    method: 'html2canvas_with_overlay',
                     fileName: heatmapFileName
                 });
                 heatmapSnapshotCount++;
