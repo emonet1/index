@@ -186,6 +186,8 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            margin: 0;
+            padding: 0;
         }
         
         .video-container.enlarged video {
@@ -193,13 +195,26 @@
             height: 100vh !important;
             object-fit: contain;
             border-radius: 0 !important;
+            max-height: none !important;
+            max-width: none !important;
+            display: block !important;
+            visibility: visible !important;
         }
         
         /* 隐藏其他元素当视频放大时 */
-        body.video-enlarged #content:not(.video-container),
-        body.video-enlarged #statsPanel,
-        body.video-enlarged .status {
+        body.video-enlarged #content > *:not(.video-container) {
             visibility: hidden;
+        }
+        
+        body.video-enlarged #statsPanel,
+        body.video-enlarged .status,
+        body.video-enlarged .controls {
+            visibility: hidden;
+        }
+        
+        /* 确保放大的视频容器在最上层 */
+        body.video-enlarged .video-container.enlarged {
+            z-index: 1000;
         }
     </style>
 </head>
@@ -370,7 +385,11 @@
             
             // 添加视频加载事件监听
             videoPlayer.addEventListener('loadedmetadata', () => {
-                debug(`视频元数据加载完成: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
+                debug(`视频元数据加载完成: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}, 时长: ${videoPlayer.duration}s`);
+            });
+            
+            videoPlayer.addEventListener('loadeddata', () => {
+                debug('视频数据加载完成，可以开始播放');
             });
             
             videoPlayer.addEventListener('canplay', () => {
@@ -378,7 +397,8 @@
             });
             
             videoPlayer.addEventListener('error', (e) => {
-                debug(`视频加载错误: ${e.message}`);
+                debug(`视频加载错误: ${e.message || '未知错误'}`);
+                console.error('视频错误:', e);
             });
             
             // 视频播放和暂停事件
@@ -416,6 +436,9 @@
                 e.preventDefault(); // 禁用右键菜单
             });
 
+            // 强制加载视频
+            videoPlayer.load();
+            
             debug("视频播放器已准备就绪。");
         }
 
@@ -459,11 +482,24 @@
             const playBtn = document.getElementById('playVideoBtn');
             
             try {
+                // 确保视频已经加载
+                if (videoPlayer.readyState < 2) {
+                    debug('等待视频加载...');
+                    await new Promise((resolve) => {
+                        videoPlayer.addEventListener('loadeddata', resolve, { once: true });
+                    });
+                }
+                
+                debug(`视频准备状态: readyState=${videoPlayer.readyState}, videoWidth=${videoPlayer.videoWidth}, videoHeight=${videoPlayer.videoHeight}`);
+                
                 // 重置视频到开始位置
                 videoPlayer.currentTime = 0;
                 
                 // 进入放大模式
                 enterEnlargedMode(videoContainer);
+                
+                // 等待一下确保样式应用
+                await new Promise(resolve => setTimeout(resolve, 100));
                 
                 // 开始播放视频
                 await videoPlayer.play();
@@ -476,6 +512,13 @@
                 isVideoExperimentActive = true;
                 debug('视频实验已开始，开始记录眼动数据');
                 
+                // 验证视频是否正确显示
+                setTimeout(() => {
+                    const rect = videoPlayer.getBoundingClientRect();
+                    debug(`视频显示区域: ${rect.width}x${rect.height} at (${rect.left}, ${rect.top})`);
+                    debug(`视频当前时间: ${videoPlayer.currentTime}s, 播放状态: ${!videoPlayer.paused}`);
+                }, 500);
+                
             } catch (error) {
                 console.error('启动视频实验失败:', error);
                 debug(`启动视频实验失败: ${error.message}`);
@@ -487,8 +530,21 @@
         // 进入放大模式
         function enterEnlargedMode(videoContainer) {
             try {
+                debug('开始进入放大模式...');
+                
+                // 添加放大样式类
                 videoContainer.classList.add('enlarged');
                 document.body.classList.add('video-enlarged');
+                
+                // 获取视频元素并确保其可见性
+                const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+                videoPlayer.style.display = 'block';
+                videoPlayer.style.visibility = 'visible';
+                videoPlayer.style.opacity = '1';
+                
+                debug(`视频元素状态: display=${videoPlayer.style.display}, visibility=${videoPlayer.style.visibility}`);
+                debug(`视频尺寸: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
+                debug(`容器尺寸: ${videoContainer.offsetWidth}x${videoContainer.offsetHeight}`);
                 
                 // 更新热力图容器尺寸以匹配窗口
                 const heatmapContainer = document.getElementById('heatmapContainer');
@@ -500,6 +556,7 @@
                 // 重新初始化热力图以匹配新的尺寸
                 setTimeout(() => {
                     updateHeatmapForEnlargedMode();
+                    debug('热力图配置已更新');
                 }, 300);
                 
             } catch (error) {
@@ -534,9 +591,22 @@
         // 退出放大模式
         function exitEnlargedMode() {
             try {
+                debug('开始退出放大模式...');
+                
                 const videoContainer = document.querySelector('.video-container');
+                const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+                
+                // 移除放大样式类
                 videoContainer.classList.remove('enlarged');
                 document.body.classList.remove('video-enlarged');
+                
+                // 恢复视频元素的原始样式
+                videoPlayer.style.width = '';
+                videoPlayer.style.height = '';
+                videoPlayer.style.maxHeight = '400px';
+                videoPlayer.style.display = '';
+                videoPlayer.style.visibility = '';
+                videoPlayer.style.opacity = '';
                 
                 // 重置按钮状态
                 const playBtn = document.getElementById('playVideoBtn');
@@ -676,6 +746,11 @@
             
             debug('开始测试放大模式截图功能...');
             debug(`当前热力图数据点数量: ${gazeCount}`);
+            
+            // 检查视频状态
+            const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            debug(`视频状态检查: paused=${videoPlayer.paused}, currentTime=${videoPlayer.currentTime}, readyState=${videoPlayer.readyState}`);
+            debug(`视频尺寸: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}, 显示尺寸: ${videoPlayer.offsetWidth}x${videoPlayer.offsetHeight}`);
             
             // 确保有一些测试数据点
             if (gazeCount < 10) {
