@@ -1814,6 +1814,185 @@
                 swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
             }
         }
+
+        async function performStop() {
+            if (firebaseConnected) await saveEyeTrackingData(true);
+            isTracking = false;
+            stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
+            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                webgazer.end();
+                debug("WebGazer.end() 已调用，停止追踪。");
+            }
+            ClearCalibration();
+            ClearCanvas();
+            updateStatus('已停止', 'error');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
+            document.getElementById('calibrateBtn').disabled = true;
+        }
+
+        // ===========================================
+        // 系统初始化（修复版本）
+        // ===========================================
+        async function initializeSystem() {
+            try {
+                updateStatus('正在加载依赖库...', 'loading');
+                debug('开始系统初始化...');
+                
+                // 检查依赖库
+                if (typeof h337 === 'undefined') {
+                    throw new Error('热力图库(h337)加载失败');
+                }
+                if (typeof swal === 'undefined') {
+                    throw new Error('SweetAlert库加载失败');
+                }
+                debug('依赖库检查完成');
+                
+                // 加载WebGazer
+                updateStatus('正在加载WebGazer...', 'loading');
+                if (!await loadWebGazerScript()) {
+                    throw new Error('WebGazer加载失败');
+                }
+                if (typeof webgazer === 'undefined') {
+                    throw new Error('WebGazer对象未定义');
+                }
+                debug('WebGazer加载成功');
+                
+                // 初始化管理器
+                updateStatus('正在初始化管理器...', 'loading');
+                coordinateTransformer = new CoordinateTransformer();
+                heatmapManager = new HeatmapManager();
+                calibrationManager = new CalibrationManager();
+                debug('管理器创建完成');
+                
+                // 初始化热力图
+                updateStatus('正在初始化热力图...', 'loading');
+                heatmapInstance = heatmapManager.initialize();
+                debug('热力图初始化完成');
+                
+                // 初始化全屏管理器
+                fullscreenManager = new FullscreenManager(heatmapManager, coordinateTransformer);
+                debug('全屏管理器初始化完成');
+                
+                // 测试Firebase连接
+                updateStatus('正在测试Firebase连接...', 'loading');
+                await testFirebaseConnection();
+                
+                // 设置视频播放器
+                updateStatus('正在设置视频播放器...', 'loading');
+                setupVideoPlayer();
+                
+                // 初始化画布
+                ClearCanvas();
+                
+                // 系统就绪
+                updateStatus('系统就绪', 'ready');
+                document.getElementById('startBtn').disabled = false;
+                librariesLoaded = true;
+                
+                debug('系统初始化完成！');
+                swal('系统就绪', '眼动追踪系统已准备就绪！\n请点击"启动眼动追踪"开始。', 'success');
+                
+            } catch (error) {
+                console.error('系统初始化失败:', error);
+                updateStatus('初始化失败', 'error');
+                debug(`系统初始化失败: ${error.message}`);
+                swal('初始化失败', `系统初始化失败:\n\n${error.message}\n\n请刷新页面重试。`, 'error');
+            }
+        }
+
+        // ===========================================
+        // 事件监听器和生命周期管理
+        // ===========================================
+        
+        // 页面加载完成后初始化系统
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeSystem);
+        } else {
+            // 如果页面已经加载完成，直接初始化
+            setTimeout(initializeSystem, 100);
+        }
+        
+        // 全局错误处理
+        window.addEventListener('error', (e) => {
+            debug(`全局错误: ${e.message} at ${e.filename}:${e.lineno}`);
+            console.error('全局错误:', e);
+        });
+        
+        window.addEventListener('unhandledrejection', (e) => {
+            debug(`Promise拒绝: ${e.reason}`);
+            console.error('Promise拒绝:', e.reason);
+        });
+        
+        // 页面卸载前的清理
+        window.addEventListener('beforeunload', (e) => {
+            if (isTracking && eyeTrackingData.gazePoints.length > 0) {
+                const message = '您有未保存的数据，确定要离开吗？';
+                e.returnValue = message;
+                return message;
+            }
+        });
+        
+        // 页面可见性变化处理
+        document.addEventListener('visibilitychange', () => {
+            if (isTracking && webgazer && typeof webgazer.pause === 'function') {
+                if (document.visibilityState === 'hidden') {
+                    webgazer.pause();
+                    debug('页面隐藏，暂停WebGazer');
+                } else {
+                    webgazer.resume();
+                    debug('页面显示，恢复WebGazer');
+                }
+            }
+        });
+
+        // ===========================================
+        // 调试和诊断功能
+        // ===========================================
+        
+        function diagnoseSystem() {
+            debug('开始系统诊断...');
+            
+            const diagnostics = {
+                libraries: {
+                    h337: typeof h337 !== 'undefined',
+                    swal: typeof swal !== 'undefined',
+                    webgazer: typeof webgazer !== 'undefined',
+                    firebase: typeof firebase !== 'undefined'
+                },
+                managers: {
+                    coordinateTransformer: coordinateTransformer !== null,
+                    heatmapManager: heatmapManager !== null,
+                    fullscreenManager: fullscreenManager !== null,
+                    calibrationManager: calibrationManager !== null
+                },
+                instances: {
+                    heatmapInstance: heatmapInstance !== null,
+                    firebaseConnected: firebaseConnected,
+                    librariesLoaded: librariesLoaded
+                },
+                status: {
+                    isTracking: isTracking,
+                    webgazerReady: webgazerReady,
+                    isVideoExperimentActive: isVideoExperimentActive
+                }
+            };
+            
+            console.table(diagnostics);
+            debug('系统诊断完成，详细信息请查看控制台');
+            return diagnostics;
+        }
+        
+        // 添加诊断按钮到统计面板（开发时使用）
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            const statsPanel = document.getElementById('statsPanel');
+            const diagnoseBtn = document.createElement('button');
+            diagnoseBtn.className = 'btn test';
+            diagnoseBtn.textContent = '🔍 系统诊断';
+            diagnoseBtn.style.cssText = 'width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;';
+            diagnoseBtn.onclick = diagnoseSystem;
+            statsPanel.appendChild(diagnoseBtn);
+        }
     </script>
 </body>
 </html>
