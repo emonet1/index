@@ -485,18 +485,23 @@
 
         // 更新热力图配置以适应全屏
         function updateHeatmapForFullscreen() {
-            // 始终以全屏尺寸初始化热力图
+            debug(`更新热力图配置为全屏尺寸: ${window.innerWidth}x${window.innerHeight}`);
+            
+            // 获取热力图容器并更新其尺寸
             const heatmapContainer = document.getElementById('heatmapContainer');
             heatmapContainer.style.width = window.innerWidth + 'px';
             heatmapContainer.style.height = window.innerHeight + 'px';
-            // 重新创建热力图实例
+            
+            // 重新创建热力图实例以适应新尺寸并清空数据
             heatmapInstance = h337.create({ 
                 container: heatmapContainer, 
-                radius: Math.max(25, window.innerWidth / 50),
+                radius: Math.max(25, window.innerWidth / 50), // 根据屏幕大小调整半径
                 maxOpacity: 0.7, 
                 minOpacity: 0.1, 
                 blur: 0.8 
             });
+            
+            debug('热力图已更新为全屏配置并清空历史数据');
         }
 
         // 退出全屏
@@ -667,10 +672,11 @@
             // 如果正在校准或未启动跟踪，则不记录数据
             if (!isTracking || isCalibrating || !data || typeof data.x !== 'number' || typeof data.y !== 'number' || isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) return;
             
-            // 只有在视频实验激活时才记录数据和热力图
+            // 只有在视频实验激活时才记录数据
             if (!isVideoExperimentActive) {
                 return;
             }
+            
             // 检查是否全屏
             const isFullscreen = document.fullscreenElement !== null || 
                                document.webkitFullscreenElement !== null || 
@@ -682,6 +688,10 @@
             
             const timestamp = new Date().toISOString();
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            const fullscreenActive = document.fullscreenElement !== null || 
+                               document.webkitFullscreenElement !== null || 
+                               document.mozFullScreenElement !== null ||
+                               document.msFullscreenElement !== null;
 
             let gazePoint = { 
                 x: Math.floor(data.x), 
@@ -701,7 +711,7 @@
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
                 
-                if (isFullscreen) {
+                if (fullscreenActive) {
                     // 全屏模式：眼动坐标直接对应屏幕坐标
                     gazePoint.relativeX = gazePoint.x;
                     gazePoint.relativeY = gazePoint.y;
@@ -719,14 +729,16 @@
                 
                 // 只在每100个点时输出一次调试信息
                 if (gazeCount % 100 === 0) {
-                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${isFullscreen}`);
+                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${fullscreenActive}`);
                 }
             }
 
             processSaccadeAndFixation(gazePoint);
             eyeTrackingData.gazePoints.push(gazePoint);
             // 只在全屏视频实验时添加热力图数据
-            if (heatmapInstance) heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
+            if (heatmapInstance && fullscreenActive && isVideoExperimentActive) {
+                heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
+            }
             gazeCount++;
             if (gazeCount % 50 === 0) { // 改为每50个点更新一次，更频繁的反馈
                 updateStatsDisplay();
@@ -834,13 +846,15 @@
                                    document.webkitFullscreenElement !== null || 
                                    document.mozFullScreenElement !== null ||
                                    document.msFullscreenElement !== null;
-                debug(`全屏状态检测: ${isFullscreen}`);
-                debug(`window.innerWidth: ${window.innerWidth}, window.innerHeight: ${window.innerHeight}`);
-                debug(`screen.width: ${screen.width}, screen.height: ${screen.height}`);
                 
-                // 如果不在全屏模式，跳过截图
                 if (!isFullscreen) {
                     debug('不在全屏模式，跳过热力图截图');
+                    return;
+                }
+                
+                // 只在全屏视频实验时进行截图
+                if (!isVideoExperimentActive) {
+                    debug('视频实验未激活，跳过热力图截图');
                     return;
                 }
                 
@@ -886,17 +900,10 @@
                     // 绘制视频帧
                     screenshotCtx.drawImage(originalVideo, drawX, drawY, drawWidth, drawHeight);
                 } else {
-                    debug('视频未在播放或尺寸无效，绘制占位符');
-                    // 绘制占位符
-                    screenshotCtx.fillStyle = '#333333';
-                    screenshotCtx.fillRect(0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                    screenshotCtx.fillStyle = '#FFFFFF';
-                    screenshotCtx.font = 'bold 48px Arial';
-                    screenshotCtx.textAlign = 'center';
-                    screenshotCtx.fillText('视频内容', screenshotCanvas.width / 2, screenshotCanvas.height / 2);
+                    debug('视频未在播放或尺寸无效，跳过热力图截图');
                 }
                 
-                // 3. 获取热力图并叠加
+                // 3. 获取当前热力图并叠加
                 heatmapContainer.style.visibility = 'hidden';
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
                 if (heatmapCanvas && heatmapCanvas.width > 0 && heatmapCanvas.height > 0) {
@@ -1250,7 +1257,13 @@
                 const heatmapContainer = document.getElementById('heatmapContainer');
                 heatmapContainer.style.width = window.innerWidth + 'px';
                 heatmapContainer.style.height = window.innerHeight + 'px';
-                heatmapInstance = h337.create({ container: heatmapContainer, radius: Math.max(25, window.innerWidth / 50), maxOpacity: 0.6, minOpacity: 0.1, blur: 0.8 });
+                heatmapInstance = h337.create({ 
+                    container: heatmapContainer, 
+                    radius: Math.max(25, window.innerWidth / 50), 
+                    maxOpacity: 0.6, 
+                    minOpacity: 0.1, 
+                    blur: 0.8 
+                });
                 await testFirebaseConnection();
                 updateStatus('系统就绪', 'ready');
                 document.getElementById('startBtn').disabled = false;
