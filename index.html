@@ -1279,8 +1279,222 @@
             testCoordinateTransform();
         }
 
+        // =======================================================================
+        // 校准与精度测试流程
+        // =======================================================================
+        
+        function ClearCanvas(){
+            document.querySelectorAll('.Calibration').forEach((i) => { i.style.display = 'none'; });
+            var canvas = document.getElementById("plotting_canvas");
+            canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        function PopUpInstruction() {
+            if (!isTracking) return swal('提示', '请先启动眼动追踪。', 'info');
+            
+            // 设置校准状态标志
+            isCalibrating = true;
+            
+            document.getElementById('statsPanel').style.display = 'none';
+            // 隐藏控制按钮避免遮挡校准点
+            document.querySelector('.controls').style.display = 'none';
+            ClearCanvas();
+            swal({
+                title:"校准说明",
+                text: "请点击屏幕上出现的9个点。您必须在每个点上点击5次，直到它变成黄色。这将校准您的眼动追踪。",
+                buttons:{ cancel: false, confirm: "开始" }
+            }).then(() => {
+                updateStatus('校准进行中', 'calibrating');
+                debug('开始9点校准流程');
+                ShowCalibrationPoint();
+                document.querySelectorAll('.Calibration').forEach((i) => { i.onclick = () => calPointClick(i); });
+            });
+        }
+        
+        function ShowCalibrationPoint() {
+            document.querySelectorAll('.Calibration').forEach((i) => { i.style.display = 'block'; });
+            document.getElementById('Pt5').style.display = 'none';
+        }
+        
+        function calPointClick(node) {
+            const id = node.id;
+            if (!CalibrationPoints[id]) CalibrationPoints[id] = 0;
+            CalibrationPoints[id]++; 
+            node.style.opacity = 0.2 * CalibrationPoints[id] + 0.2;
+            if (CalibrationPoints[id] == 5) {
+                node.style.backgroundColor = 'yellow';
+                node.setAttribute('disabled', 'disabled');
+                PointCalibrate++;
+                debug(`校准点 ${id} 完成，当前完成数量: ${PointCalibrate}`);
+                
+                // 前8个点点击完后，显示Pt5
+                if (PointCalibrate === 8) {
+                    document.getElementById('Pt5').style.display = 'block';
+                    debug('显示第9个校准点 Pt5');
+                }
+                // 只有Pt5点击完才进入精度计算
+                if (PointCalibrate === 9) {
+                    debug('所有校准点完成，开始精度计算');
+                    document.querySelectorAll('.Calibration').forEach((i) => { if(i.id !== 'Pt5') i.style.display = 'none'; });
+                    calcAccuracy();
+                }
+            }
+        }
+
+        function calcAccuracy() {
+            swal({
+                title: "正在计算精度",
+                text: "请不要移动您的鼠标，并尽力注视屏幕中央的点5秒钟。这将帮助我们计算预测的准确性。",
+                closeOnEsc: false, allowOutsideClick: false, closeModal: true
+            }).then(() => {
+                updateStatus('精度测试中...', 'calibrating');
+                if (webgazer) webgazer.params.storingPoints = true;
+                sleep(5000).then(() => {
+                    if (webgazer) webgazer.params.storingPoints = false;
+                    var past50 = webgazer.getStoredPoints();
+                    var precisionPercentage = calculatePrecision(past50);
+                    
+                    document.getElementById('Accuracy').innerHTML = `测试精度: ${precisionPercentage}%`;
+                    eyeTrackingData.calibrationData = {
+                        points: CalibrationPoints,
+                        accuracyPercentage: precisionPercentage,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    swal({
+                        title: `您的追踪精度为 ${precisionPercentage}%`,
+                        allowOutsideClick: false,
+                        buttons: { cancel: "重新校准", confirm: "接受" }
+                    }).then(isConfirm => {
+                        document.getElementById('statsPanel').style.display = 'block';
+                        // 恢复显示控制按钮
+                        document.querySelector('.controls').style.display = 'block';
+                        if (isConfirm) {
+                            ClearCanvas();
+                            updateStatus('运行中', 'ready');
+                            // 校准完成，重置校准状态
+                            isCalibrating = false;
+                        } else {
+                            document.getElementById("Accuracy").innerHTML = "等待校准...";
+                            webgazer.clearData();
+                            Restart();
+                        }
+                    });
+                });
+            });
+        }
+        
+        function sleep(time) { return new Promise((resolve) => setTimeout(resolve, time)); }
+        
+        function calculatePrecision(past50Array) {
+          var windowHeight = window.innerHeight;
+          var staringPointX = window.innerWidth / 2;
+          var staringPointY = windowHeight / 2;
+          var x50 = past50Array[0];
+          var y50 = past50Array[1];
+          var precisionPercentages = new Array(50);
+          for (let x = 0; x < 50; x++) {
+            var xDiff = staringPointX - x50[x];
+            var yDiff = staringPointY - y50[x];
+            var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
+            var halfWindowHeight = windowHeight / 2;
+            var precision = 100 - (distance / halfWindowHeight * 100);
+            precisionPercentages[x] = Math.max(0, precision);
+          }
+          return Math.round(precisionPercentages.reduce((a, b) => a + b, 0) / 50);
+        };
+
+        function Restart() {
+            if (!webgazerReady) return;
+            document.getElementById('Accuracy').innerHTML = "等待校准...";
+            if(webgazer) webgazer.clearData();
+            ClearCalibration();
+            ClearCanvas();
+            updateStatus('准备重新校准', 'ready');
+            // 确保重新校准时也隐藏控制按钮
+            document.querySelector('.controls').style.display = 'none';
+            PopUpInstruction();
+        }
+
+        function ClearCalibration() {
+            document.querySelectorAll('.Calibration').forEach((i) => {
+                i.style.backgroundColor = 'red';
+                i.style.opacity = '0.2';
+                i.removeAttribute('disabled');
+            });
+            CalibrationPoints = {};
+            PointCalibrate = 0;
+        }
+
+        // =======================================================================
+        // 系统控制与生命周期
+        // =======================================================================
+
+        function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
+        
+        function toggleHeatmap() { 
+            const heatmapContainer = document.getElementById('heatmapContainer');
+            heatmapContainer.classList.toggle('heatmap-visible');
+            heatmapContainer.style.visibility = heatmapContainer.classList.contains('heatmap-visible') ? 'visible' : 'hidden';
+        }
+        
+        function startStatsUpdate() {
+            if (statsUpdateInterval) clearInterval(statsUpdateInterval);
+            statsUpdateInterval = setInterval(() => { if (isTracking) { document.getElementById('runningTime').textContent = Math.round((Date.now() - startTime) / 1000) + 's'; updateStatsDisplay(); } }, 1000);
+        }
+        function stopStatsUpdate() { if (statsUpdateInterval) clearInterval(statsUpdateInterval); }
+        
+        function exportData() {
+            if (gazeCount === 0) return swal('无数据', '沒有可导出的数据。', 'warning');
+            const dataStr = JSON.stringify({ sessionInfo: { sessionId, userId }, collectedData: eyeTrackingData }, null, 2);
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(new Blob([dataStr], {type: 'application/json'}));
+            link.download = `eye-tracking-data-${sessionId}.json`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        }
+
+        async function startEyeTracking() {
+            if (!librariesLoaded) return;
+            const startBtn = document.getElementById('startBtn');
+            startBtn.disabled = true;
+            updateStatus('初始化WebGazer...', 'initializing');
+            try {
+                await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
+                webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
+                isTracking = true; startTime = Date.now(); webgazerReady = true;
+                if (firebaseConnected) startAutoSave();
+                startHeatmapSnapshots(); startStatsUpdate();
+                updateStatus('运行中', 'ready');
+                document.getElementById('calibrateBtn').disabled = false;
+                startBtn.textContent = '✅ 运行中';
+                swal('启动成功', '眼动追踪已启动！\n强烈建议您点击"开始校准"以提高精度。', 'success');
+            } catch (error) {
+                console.error("启动眼动追踪失败:", error);
+                updateStatus('启动失败', 'error');
+                startBtn.disabled = false;
+                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
+            }
+        }
+
+        async function performStop() {
+            if (firebaseConnected) await saveEyeTrackingData(true);
+            isTracking = false;
+            stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
+            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                webgazer.end();
+                debug("WebGazer.end() 已调用，停止追踪。");
+            }
+            ClearCalibration();
+            ClearCanvas();
+            updateStatus('已停止', 'error');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
+            document.getElementById('calibrateBtn').disabled = true;
+        }
+
         // ===========================================
-        // 系统初始化（更新）
+        // 全局初始化与事件监听
         // ===========================================
         async function initializeSystem() {
             try {
