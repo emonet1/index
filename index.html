@@ -1797,7 +1797,6 @@
                     
                     debug(`视频绘制区域: ${drawX}, ${drawY}, ${drawWidth}x${drawHeight}`);
                     
-                    
                     // 绘制视频帧
                     screenshotCtx.drawImage(originalVideo, drawX, drawY, drawWidth, drawHeight);
                 } else {
@@ -1811,20 +1810,96 @@
                     screenshotCtx.fillText('视频内容', screenshotCanvas.width / 2, screenshotCanvas.height / 2);
                 }
                 
-                // 3. 获取热力图并叠加
-                heatmapContainer.style.visibility = 'hidden';
+                // 3. 获取热力图并叠加 - 修复版本
+                debug('准备获取热力图数据...');
+                
+                // 确保热力图容器可见以便渲染
+                heatmapContainer.style.visibility = 'visible';
+                
+                // 等待一帧以确保热力图渲染完成
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                
+                // 获取热力图canvas
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
+                
                 if (heatmapCanvas && heatmapCanvas.width > 0 && heatmapCanvas.height > 0) {
                     debug(`热力图Canvas尺寸: ${heatmapCanvas.width}x${heatmapCanvas.height}`);
-                    debug('正在叠加热力图...');
                     
-                    // 调整热力图尺寸以匹配截图canvas，设置适当透明度
-                    screenshotCtx.globalAlpha = 0.8; // 设置热力图透明度
-                    screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                    screenshotCtx.globalAlpha = 1.0; // 恢复透明度
+                    // 检查canvas是否有内容
+                    const imageData = heatmapCanvas.getContext('2d').getImageData(0, 0, 1, 1);
+                    const hasContent = imageData.data.some(value => value > 0);
+                    
+                    if (hasContent) {
+                        debug('检测到热力图内容，正在叠加...');
+                        
+                        // 设置热力图透明度并绘制
+                        screenshotCtx.globalAlpha = 0.8; // 设置热力图透明度
+                        screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                        screenshotCtx.globalAlpha = 1.0; // 恢复透明度
+                        
+                        debug('热力图叠加完成');
+                    } else {
+                        debug('热力图Canvas为空白，尝试强制渲染...');
+                        
+                        // 如果canvas为空白，尝试重新渲染热力图
+                        if (heatmapManager && heatmapManager.currentInstance) {
+                            debug('强制重新渲染热力图...');
+                            
+                            // 临时隐藏然后显示以触发重绘
+                            heatmapContainer.style.display = 'none';
+                            heatmapContainer.offsetHeight; // 强制重绘
+                            heatmapContainer.style.display = 'block';
+                            
+                            // 等待重绘完成
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            
+                            // 再次尝试获取canvas
+                            const retryCanvas = heatmapContainer.querySelector('canvas');
+                            if (retryCanvas) {
+                                const retryImageData = retryCanvas.getContext('2d').getImageData(0, 0, 1, 1);
+                                const retryHasContent = retryImageData.data.some(value => value > 0);
+                                
+                                if (retryHasContent) {
+                                    debug('重试后检测到热力图内容，正在叠加...');
+                                    screenshotCtx.globalAlpha = 0.8;
+                                    screenshotCtx.drawImage(retryCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                                    screenshotCtx.globalAlpha = 1.0;
+                                    debug('热力图叠加完成（重试）');
+                                } else {
+                                    debug('重试后热力图仍为空白');
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    debug('热力图Canvas无效或为空');
+                    debug('热力图Canvas无效或不存在');
+                    
+                    // 如果没有canvas，尝试使用html2canvas作为备选方案
+                    if (typeof html2canvas !== 'undefined') {
+                        debug('尝试使用html2canvas获取热力图...');
+                        try {
+                            const canvas = await html2canvas(heatmapContainer, {
+                                backgroundColor: null,
+                                scale: 1,
+                                useCORS: true,
+                                allowTaint: true
+                            });
+                            
+                            if (canvas && canvas.width > 0 && canvas.height > 0) {
+                                debug('html2canvas成功获取热力图，正在叠加...');
+                                screenshotCtx.globalAlpha = 0.8;
+                                screenshotCtx.drawImage(canvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                                screenshotCtx.globalAlpha = 1.0;
+                                debug('热力图叠加完成（html2canvas）');
+                            }
+                        } catch (html2canvasError) {
+                            debug(`html2canvas失败: ${html2canvasError.message}`);
+                        }
+                    }
                 }
+                
+                // 恢复原始可见性
+                heatmapContainer.style.visibility = originalVisibility;
                 
                 // 4. 添加视频信息覆盖层
                 videoInfoOverlay.style.visibility = 'visible';
@@ -1887,6 +1962,7 @@
                 console.error("捕获或上传全屏视频热力图快照时出错: ", error);
                 debug(`捕获或上传全屏视频热力图快照时出错: ${error.message}`);
             } finally {
+                // 确保恢复原始状态
                 heatmapContainer.style.visibility = originalVisibility;
                 videoInfoOverlay.style.visibility = originalOverlayVisibility;
             }
