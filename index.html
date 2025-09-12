@@ -201,6 +201,7 @@
         <button class="btn test" onclick="testOverlayVisibility()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">👁️ 测试覆盖层</button>
         <button class="btn test" onclick="testDataCollection()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">📊 测试数据收集</button>
         <button class="btn test" onclick="testFullscreenCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🎬 测试全屏截图</button>
+        <button class="btn test" onclick="testGazeMapping()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🎯 测试注视映射</button>
     </div>
 
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
@@ -266,12 +267,15 @@
 
         let autoSaveInterval = null, heatmapSnapshotInterval = null, statsUpdateInterval = null;
 
+        // 新增：视频显示区域跟踪变量
+        let videoDisplayArea = { x: 0, y: 0, width: 0, height: 0 };
+
         document.getElementById('sessionIdDisplay').textContent = sessionId;
         document.getElementById('userIdDisplay').textContent = userId;
         
         // 初始化视频信息覆盖层
         document.getElementById('overlayUserId').textContent = userId;
-        
+
         // ===========================================
         // 核心系统函数
         // ===========================================
@@ -342,10 +346,12 @@
             // 添加视频加载事件监听
             videoPlayer.addEventListener('loadedmetadata', () => {
                 debug(`视频元数据加载完成: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
+                updateVideoDisplayArea(); // 更新视频显示区域
             });
             
             videoPlayer.addEventListener('canplay', () => {
                 debug('视频可以开始播放');
+                updateVideoDisplayArea(); // 更新视频显示区域
             });
             
             videoPlayer.addEventListener('error', (e) => {
@@ -388,6 +394,46 @@
             });
 
             debug("视频播放器已准备就绪。");
+        }
+
+        // 新增：计算实际视频显示区域的函数
+        function updateVideoDisplayArea() {
+            const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            const isFullscreen = document.fullscreenElement !== null || 
+                               document.webkitFullscreenElement !== null || 
+                               document.mozFullScreenElement !== null ||
+                               document.msFullscreenElement !== null;
+
+            if (isFullscreen && videoPlayer.videoWidth > 0 && videoPlayer.videoHeight > 0) {
+                // 全屏模式：计算视频在屏幕中的实际显示区域
+                const screenWidth = window.innerWidth;
+                const screenHeight = window.innerHeight;
+                const videoAspect = videoPlayer.videoWidth / videoPlayer.videoHeight;
+                const screenAspect = screenWidth / screenHeight;
+                
+                if (videoAspect > screenAspect) {
+                    // 视频更宽，以宽度为准，上下有黑边
+                    videoDisplayArea.width = screenWidth;
+                    videoDisplayArea.height = screenWidth / videoAspect;
+                    videoDisplayArea.x = 0;
+                    videoDisplayArea.y = (screenHeight - videoDisplayArea.height) / 2;
+                } else {
+                    // 视频更高，以高度为准，左右有黑边
+                    videoDisplayArea.height = screenHeight;
+                    videoDisplayArea.width = screenHeight * videoAspect;
+                    videoDisplayArea.x = (screenWidth - videoDisplayArea.width) / 2;
+                    videoDisplayArea.y = 0;
+                }
+                debug(`全屏视频显示区域: ${videoDisplayArea.x}, ${videoDisplayArea.y}, ${videoDisplayArea.width}x${videoDisplayArea.height}`);
+            } else {
+                // 窗口模式：使用视频元素的实际位置和尺寸
+                const rect = videoPlayer.getBoundingClientRect();
+                videoDisplayArea.x = rect.left;
+                videoDisplayArea.y = rect.top;
+                videoDisplayArea.width = rect.width;
+                videoDisplayArea.height = rect.height;
+                debug(`窗口视频显示区域: ${videoDisplayArea.x}, ${videoDisplayArea.y}, ${videoDisplayArea.width}x${videoDisplayArea.height}`);
+            }
         }
 
         // 视频信息更新相关函数
@@ -501,6 +547,9 @@
                     minOpacity: 0.1, 
                     blur: 0.8 
                 });
+                
+                // 更新视频显示区域
+                updateVideoDisplayArea();
                 
                 debug('热力图已更新为全屏配置');
             }
@@ -676,7 +725,7 @@
             
             // 只有在视频实验激活时才记录数据
             if (!isVideoExperimentActive) {
-                return; // 移除调试信息以减少日志噪音
+                return;
             }
             
             const timestamp = new Date().toISOString();
@@ -685,6 +734,9 @@
                                document.webkitFullscreenElement !== null || 
                                document.mozFullScreenElement !== null ||
                                document.msFullscreenElement !== null;
+
+            // 更新视频显示区域（在每次处理眼动数据时确保是最新的）
+            updateVideoDisplayArea();
 
             let gazePoint = { 
                 x: Math.floor(data.x), 
@@ -697,40 +749,51 @@
                 relativeX: null,
                 relativeY: null,
                 isVideoActive: isVideoExperimentActive,
-                isFullscreen: isFullscreen
+                isFullscreen: isFullscreen,
+                videoDisplayArea: {...videoDisplayArea} // 记录当前视频显示区域
             };
 
             // 检查视频是否正在播放，以关联眼动数据和视频时间戳
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
                 
-                if (isFullscreen) {
-                    // 全屏模式：眼动坐标直接对应屏幕坐标
-                    gazePoint.relativeX = gazePoint.x;
-                    gazePoint.relativeY = gazePoint.y;
-                } else {
-                    // 窗口模式：计算相对于视频播放器的坐标
-                    const videoRect = videoPlayer.getBoundingClientRect();
-                    const relX = gazePoint.x - videoRect.left;
-                    const relY = gazePoint.y - videoRect.top;
+                // 计算相对于视频显示区域的坐标
+                const relX = gazePoint.x - videoDisplayArea.x;
+                const relY = gazePoint.y - videoDisplayArea.y;
 
-                    if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
-                        gazePoint.relativeX = Math.floor(relX);
-                        gazePoint.relativeY = Math.floor(relY);
+                // 检查注视点是否在视频显示区域内
+                if (relX >= 0 && relX <= videoDisplayArea.width && relY >= 0 && relY <= videoDisplayArea.height) {
+                    gazePoint.relativeX = Math.floor(relX);
+                    gazePoint.relativeY = Math.floor(relY);
+                    
+                    // 计算在视频原始分辨率中的坐标（用于分析）
+                    if (videoPlayer.videoWidth > 0 && videoPlayer.videoHeight > 0) {
+                        gazePoint.videoNormalizedX = relX / videoDisplayArea.width;
+                        gazePoint.videoNormalizedY = relY / videoDisplayArea.height;
+                        gazePoint.videoOriginalX = Math.floor(gazePoint.videoNormalizedX * videoPlayer.videoWidth);
+                        gazePoint.videoOriginalY = Math.floor(gazePoint.videoNormalizedY * videoPlayer.videoHeight);
                     }
+                } else {
+                    // 注视点在视频区域外（如黑边区域）
+                    gazePoint.outsideVideoArea = true;
                 }
                 
                 // 只在每100个点时输出一次调试信息
                 if (gazeCount % 100 === 0) {
-                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${isFullscreen}`);
+                    debug(`注视点: 屏幕(${gazePoint.x}, ${gazePoint.y}) -> 视频相对(${gazePoint.relativeX}, ${gazePoint.relativeY}) -> 视频原始(${gazePoint.videoOriginalX}, ${gazePoint.videoOriginalY})`);
                 }
             }
 
             processSaccadeAndFixation(gazePoint);
             eyeTrackingData.gazePoints.push(gazePoint);
-            if (heatmapInstance) heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
+            
+            // 关键修复：只有在视频区域内的注视点才添加到热力图
+            if (heatmapInstance && !gazePoint.outsideVideoArea) {
+                heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
+            }
+            
             gazeCount++;
-            if (gazeCount % 50 === 0) { // 改为每50个点更新一次，更频繁的反馈
+            if (gazeCount % 50 === 0) {
                 updateStatsDisplay();
                 debug(`已记录 ${gazeCount} 个注视点`);
             }
@@ -1294,16 +1357,6 @@
             if (isTracking && eyeTrackingData.gazePoints.length > 0) {
                 const message = '您有未保存的数据，确定要离开吗？';
                 e.returnValue = message; return message;
-            }
-        });
-        document.addEventListener('visibilitychange', () => {
-            if (isTracking && webgazer) {
-                document.visibilityState === 'hidden' ? webgazer.pause() : webgazer.resume();
-            }
-        });
-    </script>
-</body>
-</html>
             }
         });
         document.addEventListener('visibilitychange', () => {
