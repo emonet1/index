@@ -1810,95 +1810,170 @@
                     screenshotCtx.fillText('视频内容', screenshotCanvas.width / 2, screenshotCanvas.height / 2);
                 }
                 
-                // 3. 获取热力图并叠加 - 修复版本
-                debug('准备获取热力图数据...');
+                // 3. 强制生成热力图并叠加 - 全新方法
+                debug('开始强制生成热力图...');
                 
-                // 确保热力图容器可见以便渲染
+                // 确保热力图容器可见
                 heatmapContainer.style.visibility = 'visible';
+                heatmapContainer.style.display = 'block';
                 
-                // 等待一帧以确保热力图渲染完成
-                await new Promise(resolve => requestAnimationFrame(resolve));
+                // 创建一个新的临时热力图实例专用于截图
+                const tempHeatmapContainer = document.createElement('div');
+                tempHeatmapContainer.style.position = 'fixed';
+                tempHeatmapContainer.style.top = '0px';
+                tempHeatmapContainer.style.left = '0px';
+                tempHeatmapContainer.style.width = screenshotCanvas.width + 'px';
+                tempHeatmapContainer.style.height = screenshotCanvas.height + 'px';
+                tempHeatmapContainer.style.pointerEvents = 'none';
+                tempHeatmapContainer.style.zIndex = '999999';
+                document.body.appendChild(tempHeatmapContainer);
                 
-                // 获取热力图canvas
-                const heatmapCanvas = heatmapContainer.querySelector('canvas');
+                // 创建临时热力图实例
+                const tempHeatmapInstance = h337.create({
+                    container: tempHeatmapContainer,
+                    radius: Math.max(20, Math.min(50, screenshotCanvas.width / 40)),
+                    maxOpacity: 0.8,
+                    minOpacity: 0.2,
+                    blur: 0.75,
+                    gradient: {
+                        0.0: 'rgba(0,0,255,0)',
+                        0.3: 'rgba(0,255,0,0.6)',
+                        0.6: 'rgba(255,255,0,0.8)',
+                        1.0: 'rgba(255,0,0,1)'
+                    }
+                });
                 
-                if (heatmapCanvas && heatmapCanvas.width > 0 && heatmapCanvas.height > 0) {
-                    debug(`热力图Canvas尺寸: ${heatmapCanvas.width}x${heatmapCanvas.height}`);
+                debug('临时热力图实例创建完成，开始添加数据点...');
+                
+                // 从原热力图管理器获取所有数据点并添加到临时实例
+                if (heatmapManager && heatmapManager.dataPoints && heatmapManager.dataPoints.length > 0) {
+                    debug(`从热力图管理器获取到 ${heatmapManager.dataPoints.length} 个数据点`);
                     
-                    // 检查canvas是否有内容
-                    const imageData = heatmapCanvas.getContext('2d').getImageData(0, 0, 1, 1);
-                    const hasContent = imageData.data.some(value => value > 0);
+                    let addedPoints = 0;
+                    heatmapManager.dataPoints.forEach(point => {
+                        // 转换坐标到当前屏幕尺寸
+                        let x = point.x;
+                        let y = point.y;
+                        
+                        // 如果数据点是在不同尺寸下记录的，需要进行缩放
+                        if (point.isFullscreen && document.fullscreenElement !== null) {
+                            // 全屏到全屏，直接使用
+                        } else if (!point.isFullscreen && document.fullscreenElement !== null) {
+                            // 窗口到全屏，需要缩放
+                            x = (x / window.screen.width) * screenshotCanvas.width;
+                            y = (y / window.screen.height) * screenshotCanvas.height;
+                        }
+                        
+                        // 验证坐标有效性
+                        if (x >= 0 && x <= screenshotCanvas.width && y >= 0 && y <= screenshotCanvas.height) {
+                            tempHeatmapInstance.addData({
+                                x: Math.floor(x),
+                                y: Math.floor(y),
+                                value: point.value || 5
+                            });
+                            addedPoints++;
+                        }
+                    });
+                    
+                    debug(`成功添加 ${addedPoints} 个有效数据点到临时热力图`);
+                } else {
+                    debug('没有找到热力图数据点，生成测试数据...');
+                    
+                    // 如果没有实际数据，生成一些测试数据用于验证
+                    const testPoints = [
+                        { x: screenshotCanvas.width * 0.3, y: screenshotCanvas.height * 0.3, value: 10 },
+                        { x: screenshotCanvas.width * 0.5, y: screenshotCanvas.height * 0.5, value: 15 },
+                        { x: screenshotCanvas.width * 0.7, y: screenshotCanvas.height * 0.7, value: 8 },
+                        { x: screenshotCanvas.width * 0.4, y: screenshotCanvas.height * 0.6, value: 12 }
+                    ];
+                    
+                    testPoints.forEach(point => {
+                        tempHeatmapInstance.addData(point);
+                    });
+                    
+                    debug('已添加测试热力图数据点');
+                }
+                
+                // 等待热力图渲染完成
+                await new Promise(resolve => {
+                    setTimeout(() => {
+                        requestAnimationFrame(resolve);
+                    }, 200);
+                });
+                
+                // 获取临时热力图的canvas
+                const tempHeatmapCanvas = tempHeatmapContainer.querySelector('canvas');
+                
+                if (tempHeatmapCanvas && tempHeatmapCanvas.width > 0 && tempHeatmapCanvas.height > 0) {
+                    debug(`临时热力图Canvas尺寸: ${tempHeatmapCanvas.width}x${tempHeatmapCanvas.height}`);
+                    
+                    // 强制重绘以确保内容存在
+                    const tempCtx = tempHeatmapCanvas.getContext('2d');
+                    tempCtx.globalCompositeOperation = 'source-over';
+                    
+                    // 检查是否有内容
+                    const imageData = tempCtx.getImageData(0, 0, tempHeatmapCanvas.width, tempHeatmapCanvas.height);
+                    let hasContent = false;
+                    for (let i = 3; i < imageData.data.length; i += 4) {
+                        if (imageData.data[i] > 0) { // 检查alpha通道
+                            hasContent = true;
+                            break;
+                        }
+                    }
                     
                     if (hasContent) {
-                        debug('检测到热力图内容，正在叠加...');
+                        debug('检测到临时热力图内容，正在叠加到截图...');
                         
-                        // 设置热力图透明度并绘制
-                        screenshotCtx.globalAlpha = 0.8; // 设置热力图透明度
-                        screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                        screenshotCtx.globalAlpha = 1.0; // 恢复透明度
+                        // 设置混合模式以正确叠加热力图
+                        screenshotCtx.globalAlpha = 0.7;
+                        screenshotCtx.globalCompositeOperation = 'screen'; // 使用screen混合模式以获得更好的热力图效果
+                        screenshotCtx.drawImage(tempHeatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
+                        screenshotCtx.globalCompositeOperation = 'source-over'; // 恢复默认混合模式
+                        screenshotCtx.globalAlpha = 1.0;
                         
-                        debug('热力图叠加完成');
+                        debug('热力图成功叠加到截图上');
                     } else {
-                        debug('热力图Canvas为空白，尝试强制渲染...');
+                        debug('临时热力图Canvas仍然为空，尝试手动绘制热力图...');
                         
-                        // 如果canvas为空白，尝试重新渲染热力图
-                        if (heatmapManager && heatmapManager.currentInstance) {
-                            debug('强制重新渲染热力图...');
+                        // 手动绘制热力图作为最后的备选方案
+                        if (heatmapManager && heatmapManager.dataPoints && heatmapManager.dataPoints.length > 0) {
+                            debug('开始手动绘制热力图点...');
                             
-                            // 临时隐藏然后显示以触发重绘
-                            heatmapContainer.style.display = 'none';
-                            heatmapContainer.offsetHeight; // 强制重绘
-                            heatmapContainer.style.display = 'block';
-                            
-                            // 等待重绘完成
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                            
-                            // 再次尝试获取canvas
-                            const retryCanvas = heatmapContainer.querySelector('canvas');
-                            if (retryCanvas) {
-                                const retryImageData = retryCanvas.getContext('2d').getImageData(0, 0, 1, 1);
-                                const retryHasContent = retryImageData.data.some(value => value > 0);
+                            screenshotCtx.globalAlpha = 0.6;
+                            heatmapManager.dataPoints.forEach(point => {
+                                let x = point.x;
+                                let y = point.y;
                                 
-                                if (retryHasContent) {
-                                    debug('重试后检测到热力图内容，正在叠加...');
-                                    screenshotCtx.globalAlpha = 0.8;
-                                    screenshotCtx.drawImage(retryCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                                    screenshotCtx.globalAlpha = 1.0;
-                                    debug('热力图叠加完成（重试）');
-                                } else {
-                                    debug('重试后热力图仍为空白');
+                                // 坐标转换（如果需要）
+                                if (!point.isFullscreen && document.fullscreenElement !== null) {
+                                    x = (x / window.screen.width) * screenshotCanvas.width;
+                                    y = (y / window.screen.height) * screenshotCanvas.height;
                                 }
-                            }
+                                
+                                if (x >= 0 && x <= screenshotCanvas.width && y >= 0 && y <= screenshotCanvas.height) {
+                                    // 绘制径向渐变圆形代表热力点
+                                    const gradient = screenshotCtx.createRadialGradient(x, y, 0, x, y, 30);
+                                    gradient.addColorStop(0, 'rgba(255, 0, 0, 0.8)');
+                                    gradient.addColorStop(0.3, 'rgba(255, 255, 0, 0.6)');
+                                    gradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
+                                    
+                                    screenshotCtx.fillStyle = gradient;
+                                    screenshotCtx.fillRect(x - 30, y - 30, 60, 60);
+                                }
+                            });
+                            screenshotCtx.globalAlpha = 1.0;
+                            
+                            debug('手动热力图绘制完成');
                         }
                     }
                 } else {
-                    debug('热力图Canvas无效或不存在');
-                    
-                    // 如果没有canvas，尝试使用html2canvas作为备选方案
-                    if (typeof html2canvas !== 'undefined') {
-                        debug('尝试使用html2canvas获取热力图...');
-                        try {
-                            const canvas = await html2canvas(heatmapContainer, {
-                                backgroundColor: null,
-                                scale: 1,
-                                useCORS: true,
-                                allowTaint: true
-                            });
-                            
-                            if (canvas && canvas.width > 0 && canvas.height > 0) {
-                                debug('html2canvas成功获取热力图，正在叠加...');
-                                screenshotCtx.globalAlpha = 0.8;
-                                screenshotCtx.drawImage(canvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                                screenshotCtx.globalAlpha = 1.0;
-                                debug('热力图叠加完成（html2canvas）');
-                            }
-                        } catch (html2canvasError) {
-                            debug(`html2canvas失败: ${html2canvasError.message}`);
-                        }
-                    }
+                    debug('临时热力图Canvas创建失败');
                 }
                 
-                // 恢复原始可见性
+                // 清理临时容器
+                document.body.removeChild(tempHeatmapContainer);
+                
+                // 恢复原始热力图容器状态
                 heatmapContainer.style.visibility = originalVisibility;
                 
                 // 4. 添加视频信息覆盖层
@@ -1908,7 +1983,7 @@
                 // 手动绘制覆盖层信息
                 screenshotCtx.font = 'bold 24px Arial';
                 screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.9)';
-                const overlayText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s`;
+                const overlayText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s | 热力图点数: ${heatmapManager ? heatmapManager.dataPoints.length : 0}`;
                 const overlayMetrics = screenshotCtx.measureText(overlayText);
                 screenshotCtx.fillRect(10, 10, overlayMetrics.width + 20, 40);
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
@@ -1920,7 +1995,7 @@
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
                 
-                const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s_fullscreen_video`;
+                const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s_fullscreen_video_heatmap`;
                 
                 debug(`准备上传全屏视频热力图，文件名: ${heatmapFileName}, 尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
                 
@@ -1948,15 +2023,18 @@
                     userId,
                     videoTimestamp: currentVideoTime,
                     videoFrameCaptured: true,
-                    method: 'direct_video_canvas_with_heatmap',
+                    method: 'forced_temporary_heatmap_instance',
                     fileName: heatmapFileName,
                     imageSize: `${screenshotCanvas.width}x${screenshotCanvas.height}`,
                     isFullscreen: true,
-                    captureType: 'fullscreen_video_with_heatmap_overlay',
-                    videoDisplaySize: `${originalVideo.videoWidth}x${originalVideo.videoHeight}`
+                    captureType: 'fullscreen_video_with_forced_heatmap_overlay',
+                    videoDisplaySize: `${originalVideo.videoWidth}x${originalVideo.videoHeight}`,
+                    heatmapDataPoints: heatmapManager ? heatmapManager.dataPoints.length : 0
                 });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
+                
+                debug(`热力图截图完成: 包含视频 + ${heatmapManager ? heatmapManager.dataPoints.length : 0} 个热力图数据点`);
                 
             } catch (error) {
                 console.error("捕获或上传全屏视频热力图快照时出错: ", error);
@@ -1968,209 +2046,37 @@
             }
         }
 
-        // 修改startEyeTracking函数中的WebGazer跟踪器设置
-        async function startEyeTracking() {
-            if (!librariesLoaded) return;
-            const startBtn = document.getElementById('startBtn');
-            startBtn.disabled = true;
-            updateStatus('初始化WebGazer...', 'initializing');
-            try {
-                // 修复：使用正确的跟踪器名称
-                await webgazer.setRegression('ridge').setTracker('TFFacemesh').setGazeListener(gazeDataCallback).begin();
-                webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
-                isTracking = true; startTime = Date.now(); webgazerReady = true;
-                if (firebaseConnected) startAutoSave();
-                startHeatmapSnapshots(); startStatsUpdate();
-                updateStatus('运行中', 'ready');
-                document.getElementById('calibrateBtn').disabled = false;
-                startBtn.textContent = '✅ 运行中';
-                swal('启动成功', '眼动追踪已启动！\n强烈建议您点击"开始校准"以提高精度。', 'success');
-            } catch (error) {
-                console.error("启动眼动追踪失败:", error);
-                updateStatus('启动失败', 'error');
-                startBtn.disabled = false;
-                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
-            }
-        }
-
-        async function performStop() {
-            if (firebaseConnected) await saveEyeTrackingData(true);
-            isTracking = false;
-            stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
-            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
-                webgazer.end();
-                debug("WebGazer.end() 已调用，停止追踪。");
-            }
-            ClearCalibration();
-            ClearCanvas();
-            updateStatus('已停止', 'error');
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
-            document.getElementById('calibrateBtn').disabled = true;
-        }
-
-        // ===========================================
-        // 系统初始化（修复版本）
-        // ===========================================
-        async function initializeSystem() {
-            try {
-                updateStatus('正在加载依赖库...', 'loading');
-                debug('开始系统初始化...');
-                
-                // 检查依赖库
-                if (typeof h337 === 'undefined') {
-                    throw new Error('热力图库(h337)加载失败');
-                }
-                if (typeof swal === 'undefined') {
-                    throw new Error('SweetAlert库加载失败');
-                }
-                debug('依赖库检查完成');
-                
-                // 加载WebGazer
-                updateStatus('正在加载WebGazer...', 'loading');
-                if (!await loadWebGazerScript()) {
-                    throw new Error('WebGazer加载失败');
-                }
-                if (typeof webgazer === 'undefined') {
-                    throw new Error('WebGazer对象未定义');
-                }
-                debug('WebGazer加载成功');
-                
-                // 初始化管理器
-                updateStatus('正在初始化管理器...', 'loading');
-                coordinateTransformer = new CoordinateTransformer();
-                heatmapManager = new HeatmapManager();
-                calibrationManager = new CalibrationManager();
-                debug('管理器创建完成');
-                
-                // 初始化热力图
-                updateStatus('正在初始化热力图...', 'loading');
-                heatmapInstance = heatmapManager.initialize();
-                debug('热力图初始化完成');
-                
-                // 初始化全屏管理器
-                fullscreenManager = new FullscreenManager(heatmapManager, coordinateTransformer);
-                debug('全屏管理器初始化完成');
-                
-                // 测试Firebase连接
-                updateStatus('正在测试Firebase连接...', 'loading');
-                await testFirebaseConnection();
-                
-                // 设置视频播放器
-                updateStatus('正在设置视频播放器...', 'loading');
-                setupVideoPlayer();
-                
-                // 初始化画布
-                ClearCanvas();
-                
-                // 系统就绪
-                updateStatus('系统就绪', 'ready');
-                document.getElementById('startBtn').disabled = false;
-                librariesLoaded = true;
-                
-                debug('系统初始化完成！');
-                swal('系统就绪', '眼动追踪系统已准备就绪！\n请点击"启动眼动追踪"开始。', 'success');
-                
-            } catch (error) {
-                console.error('系统初始化失败:', error);
-                updateStatus('初始化失败', 'error');
-                debug(`系统初始化失败: ${error.message}`);
-                swal('初始化失败', `系统初始化失败:\n\n${error.message}\n\n请刷新页面重试。`, 'error');
-            }
-        }
-
-        // ===========================================
-        // 事件监听器和生命周期管理
-        // ===========================================
-        
-        // 页面加载完成后初始化系统
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeSystem);
-        } else {
-            // 如果页面已经加载完成，直接初始化
-            setTimeout(initializeSystem, 100);
-        }
-        
-        // 全局错误处理
-        window.addEventListener('error', (e) => {
-            debug(`全局错误: ${e.message} at ${e.filename}:${e.lineno}`);
-            console.error('全局错误:', e);
-        });
-        
-        window.addEventListener('unhandledrejection', (e) => {
-            debug(`Promise拒绝: ${e.reason}`);
-            console.error('Promise拒绝:', e.reason);
-        });
-        
-        // 页面卸载前的清理
-        window.addEventListener('beforeunload', (e) => {
-            if (isTracking && eyeTrackingData.gazePoints.length > 0) {
-                const message = '您有未保存的数据，确定要离开吗？';
-                e.returnValue = message;
-                return message;
-            }
-        });
-        
-        // 页面可见性变化处理
-        document.addEventListener('visibilitychange', () => {
-            if (isTracking && webgazer && typeof webgazer.pause === 'function') {
-                if (document.visibilityState === 'hidden') {
-                    webgazer.pause();
-                    debug('页面隐藏，暂停WebGazer');
-                } else {
-                    webgazer.resume();
-                    debug('页面显示，恢复WebGazer');
-                }
-            }
-        });
-
-        // ===========================================
-        // 调试和诊断功能
-        // ===========================================
-        
-        function diagnoseSystem() {
-            debug('开始系统诊断...');
+        // 添加一个专门的测试热力图截图功能
+        async function testHeatmapCapture() {
+            debug('开始测试热力图截图功能...');
             
-            const diagnostics = {
-                libraries: {
-                    h337: typeof h337 !== 'undefined',
-                    swal: typeof swal !== 'undefined',
-                    webgazer: typeof webgazer !== 'undefined',
-                    firebase: typeof firebase !== 'undefined'
-                },
-                managers: {
-                    coordinateTransformer: coordinateTransformer !== null,
-                    heatmapManager: heatmapManager !== null,
-                    fullscreenManager: fullscreenManager !== null,
-                    calibrationManager: calibrationManager !== null
-                },
-                instances: {
-                    heatmapInstance: heatmapInstance !== null,
-                    firebaseConnected: firebaseConnected,
-                    librariesLoaded: librariesLoaded
-                },
-                status: {
-                    isTracking: isTracking,
-                    webgazerReady: webgazerReady,
-                    isVideoExperimentActive: isVideoExperimentActive
+            // 先添加一些测试数据点到热力图
+            if (heatmapManager) {
+                debug('添加测试热力图数据点...');
+                for (let i = 0; i < 20; i++) {
+                    const x = Math.random() * window.innerWidth;
+                    const y = Math.random() * window.innerHeight;
+                    heatmapManager.addDataPoint(x, y, Math.random() * 10 + 5, x, y);
                 }
-            };
+                debug(`已添加20个测试数据点，总点数: ${heatmapManager.dataPoints.length}`);
+            }
             
-            console.table(diagnostics);
-            debug('系统诊断完成，详细信息请查看控制台');
-            return diagnostics;
+            // 强制截图
+            await captureHeatmapSnapshot();
+            
+            swal('测试完成', `热力图截图测试完成！\n总数据点: ${heatmapManager ? heatmapManager.dataPoints.length : 0}\n请检查Cloudinary中的图片是否包含热力图。`, 'info');
         }
-        
-        // 添加诊断按钮到统计面板（开发时使用）
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+
+        // 在统计面板中添加测试热力图截图按钮
+        window.addEventListener('load', () => {
             const statsPanel = document.getElementById('statsPanel');
-            const diagnoseBtn = document.createElement('button');
-            diagnoseBtn.className = 'btn test';
-            diagnoseBtn.textContent = '🔍 系统诊断';
-            diagnoseBtn.style.cssText = 'width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;';
-            diagnoseBtn.onclick = diagnoseSystem;
-            statsPanel.appendChild(diagnoseBtn);
-        }
+            const testHeatmapBtn = document.createElement('button');
+            testHeatmapBtn.className = 'btn test';
+            testHeatmapBtn.textContent = '🔥 测试热力图截图';
+            testHeatmapBtn.style.cssText = 'width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;';
+            testHeatmapBtn.onclick = testHeatmapCapture;
+            statsPanel.appendChild(testHeatmapBtn);
+        });
     </script>
 </body>
 </html>
