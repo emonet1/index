@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 视频观看版</title>
+    <title>眼动追踪数据收集系统 - 视频观看版 (已修复)</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -148,25 +148,23 @@
         .firebase-status { margin-top: 8px; padding: 8px; border-radius: 4px; text-align: center; font-size: 10px; }
         .heatmap-visible { visibility: visible !important; }
         
-        /* 视频时间戳覆盖层 - 仅在热力图截图时可见 */
         #videoInfoOverlay {
-            position: fixed; /* 改为 fixed 以确保在全屏时可见 */
+            position: fixed;
             top: 10px;
             left: 10px;
-            background: rgba(255, 0, 0, 0.9); /* 改为红色背景便于调试 */
+            background: rgba(255, 0, 0, 0.9);
             color: white;
             padding: 8px 12px;
             border-radius: 4px;
             font-family: 'Courier New', monospace;
             font-size: 14px;
             font-weight: bold;
-            z-index: 10000; /* 提高 z-index 确保在全屏时可见 */
+            z-index: 10000;
             pointer-events: none;
-            visibility: hidden; /* 默认隐藏，用户看不到 */
-            border: 2px solid white; /* 添加白色边框便于识别 */
+            visibility: hidden;
+            border: 2px solid white;
         }
         
-        /* 全屏时的视频容器 */
         .video-container {
             position: relative;
             display: inline-block;
@@ -254,7 +252,7 @@
         let heatmapInstance = null, gazeCount = 0, snapshotCount = 0, heatmapSnapshotCount = 0, saccadeCount = 0, fixationCount = 0, totalFixationTime = 0;
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, librariesLoaded = false, firebaseConnected = false;
-        let isCalibrating = false, isVideoExperimentActive = false; // 新增状态标志
+        let isCalibrating = false, isVideoExperimentActive = false;
         
         var PointCalibrate = 0;
         var CalibrationPoints = {};
@@ -269,7 +267,6 @@
         document.getElementById('sessionIdDisplay').textContent = sessionId;
         document.getElementById('userIdDisplay').textContent = userId;
         
-        // 初始化视频信息覆盖层
         document.getElementById('overlayUserId').textContent = userId;
         
         // ===========================================
@@ -334,48 +331,35 @@
         function setupVideoPlayer() {
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             
-            // 禁用视频默认控制
             videoPlayer.controls = false;
             videoPlayer.controlsList = "nodownload nofullscreen noremoteplayback";
             videoPlayer.disablePictureInPicture = true;
             
-            // 添加视频加载事件监听
-            videoPlayer.addEventListener('loadedmetadata', () => {
-                debug(`视频元数据加载完成: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
-            });
+            videoPlayer.addEventListener('loadedmetadata', () => debug(`视频元数据加载完成: ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`));
+            videoPlayer.addEventListener('canplay', () => debug('视频可以开始播放'));
+            videoPlayer.addEventListener('error', (e) => debug(`视频加载错误: ${e.message}`));
             
-            videoPlayer.addEventListener('canplay', () => {
-                debug('视频可以开始播放');
-            });
-            
-            videoPlayer.addEventListener('error', (e) => {
-                debug(`视频加载错误: ${e.message}`);
-            });
-            
-            // 视频播放和暂停事件
             videoPlayer.onplay = () => {
                 debug(`视频开始播放，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
-                isVideoExperimentActive = true;
-                startVideoInfoUpdate(); // 开始更新视频信息显示
-                debug(`isVideoExperimentActive 设置为: ${isVideoExperimentActive}`);
+                startVideoInfoUpdate();
             };
             
             videoPlayer.onpause = () => {
                 debug(`视频已暂停，当前时间: ${videoPlayer.currentTime.toFixed(2)}s`);
-                isVideoExperimentActive = false;
-                stopVideoInfoUpdate(); // 停止更新视频信息显示
-                debug(`isVideoExperimentActive 设置为: ${isVideoExperimentActive}`);
+                // [MODIFIED] 注释掉下面这行，防止全屏切换时意外中断数据收集
+                // isVideoExperimentActive = false; 
+                stopVideoInfoUpdate();
+                debug(`isVideoExperimentActive 状态保持不变，以允许数据继续收集`);
             };
 
             videoPlayer.onended = () => {
                 debug('视频播放结束');
-                isVideoExperimentActive = false;
-                stopVideoInfoUpdate(); // 停止更新视频信息显示
+                isVideoExperimentActive = false; // 在这里正确地结束实验状态
+                stopVideoInfoUpdate();
                 exitFullscreen();
                 swal('实验结束', '视频播放已结束，眼动数据收集完成！', 'success');
             };
 
-            // 防止用户手动操作视频
             videoPlayer.addEventListener('seeking', (e) => {
                 if (isVideoExperimentActive) {
                     e.preventDefault();
@@ -383,19 +367,16 @@
                 }
             });
 
-            videoPlayer.addEventListener('contextmenu', (e) => {
-                e.preventDefault(); // 禁用右键菜单
-            });
+            videoPlayer.addEventListener('contextmenu', (e) => e.preventDefault());
 
             debug("视频播放器已准备就绪。");
         }
 
-        // 视频信息更新相关函数
         let videoInfoInterval = null;
 
         function startVideoInfoUpdate() {
             if (videoInfoInterval) clearInterval(videoInfoInterval);
-            videoInfoInterval = setInterval(updateVideoInfo, 100); // 每100ms更新一次
+            videoInfoInterval = setInterval(updateVideoInfo, 100);
         }
 
         function stopVideoInfoUpdate() {
@@ -413,109 +394,100 @@
             }
         }
 
-        // 开始视频实验
         async function startVideoExperiment() {
-            if (!isTracking) {
-                swal('提示', '请先启动眼动追踪系统！', 'warning');
-                return;
-            }
-
-            if (!webgazerReady) {
-                swal('提示', '请等待眼动追踪系统准备就绪！', 'warning');
-                return;
+            if (!isTracking || !webgazerReady) {
+                return swal('提示', '请先启动眼动追踪系统并等待其就绪！', 'warning');
             }
 
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             const playBtn = document.getElementById('playVideoBtn');
             
             try {
-                // 重置视频到开始位置
                 videoPlayer.currentTime = 0;
                 
-                // 先开始播放视频
+                // 设置实验激活标志
+                isVideoExperimentActive = true;
+                debug(`isVideoExperimentActive 设置为: ${isVideoExperimentActive}`);
+
                 await videoPlayer.play();
                 debug('视频开始播放，准备进入全屏');
                 
-                // 稍等片刻再进入全屏，确保视频已经开始播放
                 setTimeout(async () => {
                     try {
-                        await enterFullscreen(videoPlayer);
+                        await enterFullscreen(videoPlayer.parentElement); // 全屏整个容器
                         debug('已成功进入全屏模式');
                     } catch (error) {
                         debug(`全屏失败，继续非全屏模式: ${error.message}`);
                     }
                 }, 100);
                 
-                // 更新按钮状态
                 playBtn.textContent = '🎬 实验进行中...';
                 playBtn.disabled = true;
-                
-                isVideoExperimentActive = true;
                 debug('视频实验已开始，开始记录眼动数据');
                 
             } catch (error) {
                 console.error('启动视频实验失败:', error);
                 debug(`启动视频实验失败: ${error.message}`);
+                isVideoExperimentActive = false; // 启动失败，重置状态
                 swal('错误', '无法启动视频实验，请检查浏览器权限！', 'error');
             }
         }
 
-        // 进入全屏
         async function enterFullscreen(element) {
             try {
-                if (element.requestFullscreen) {
-                    await element.requestFullscreen();
-                } else if (element.webkitRequestFullscreen) {
-                    await element.webkitRequestFullscreen();
-                } else if (element.msRequestFullscreen) {
-                    await element.msRequestFullscreen();
-                }
+                if (element.requestFullscreen) await element.requestFullscreen();
+                else if (element.webkitRequestFullscreen) await element.webkitRequestFullscreen();
+                else if (element.msRequestFullscreen) await element.msRequestFullscreen();
+                
                 debug('已进入全屏模式');
-                
-                // 全屏后需要重新初始化热力图以匹配新的尺寸
-                setTimeout(() => {
-                    updateHeatmapForFullscreen();
-                }, 500);
-                
+                setTimeout(() => updateHeatmapForFullscreen(), 500);
             } catch (error) {
                 debug(`全屏模式失败: ${error.message}`);
                 throw error;
             }
         }
 
-        // 更新热力图配置以适应全屏
         function updateHeatmapForFullscreen() {
-            debug(`更新热力图配置为全屏尺寸: ${window.innerWidth}x${window.innerHeight}`);
-            
-            // 获取热力图容器并更新其尺寸
-            const heatmapContainer = document.getElementById('heatmapContainer');
-            heatmapContainer.style.width = window.innerWidth + 'px';
-            heatmapContainer.style.height = window.innerHeight + 'px';
-            
-            // 重新创建热力图实例以适应新尺寸并清空数据
-            heatmapInstance = h337.create({ 
-                container: heatmapContainer, 
-                radius: Math.max(25, window.innerWidth / 50), // 根据屏幕大小调整半径
-                maxOpacity: 0.7, 
-                minOpacity: 0.1, 
-                blur: 0.8 
-            });
-            
-            debug('热力图已更新为全屏配置并清空历史数据');
-        }
-
-        // 退出全屏
-        function exitFullscreen() {
-            try {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                } else if (document.webkitExitFullscreen) {
-                    document.webkitExitFullscreen();
-                } else if (document.msExitFullscreen) {
-                    document.msExitFullscreen();
+            if (heatmapInstance) {
+                debug(`更新热力图配置为全屏尺寸: ${window.innerWidth}x${window.innerHeight}`);
+                
+                const heatmapContainer = document.getElementById('heatmapContainer');
+                heatmapContainer.style.width = window.innerWidth + 'px';
+                heatmapContainer.style.height = window.innerHeight + 'px';
+                
+                heatmapInstance = h337.create({ 
+                    container: heatmapContainer, 
+                    radius: Math.max(20, window.innerWidth / 80), // 调整半径
+                    maxOpacity: 0.7, 
+                    minOpacity: 0.1, 
+                    blur: 0.8 
+                });
+                
+                // [MODIFIED] 恢复所有已经记录的注视点到新的热力图实例上
+                if (eyeTrackingData && eyeTrackingData.gazePoints.length > 0) {
+                    const pointsToRestore = eyeTrackingData.gazePoints.map(p => ({
+                        x: p.x,
+                        y: p.y,
+                        value: 1 // 使用较小的值
+                    }));
+                    
+                    heatmapInstance.setData({
+                        max: 5, // 设置一个最大值
+                        data: pointsToRestore
+                    });
+                    debug(`已将 ${pointsToRestore.length} 个历史注视点恢复到新的热力图上。`);
                 }
                 
-                // 重置按钮状态
+                debug('热力图已更新为全屏配置');
+            }
+        }
+
+        function exitFullscreen() {
+            try {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                else if (document.msExitFullscreen) document.msExitFullscreen();
+                
                 const playBtn = document.getElementById('playVideoBtn');
                 playBtn.textContent = '▶️ 开始视频实验';
                 playBtn.disabled = false;
@@ -526,7 +498,6 @@
             }
         }
 
-        // 添加测试视频截图的函数
         function testVideoCapture() {
             const video = document.getElementById('eyeTrackingVideoPlayer');
             const canvas = document.createElement('canvas');
@@ -538,8 +509,6 @@
             try {
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 const dataURL = canvas.toDataURL('image/png');
-                
-                // 创建一个新窗口显示截图
                 const win = window.open();
                 win.document.write(`<img src="${dataURL}" style="max-width: 100%;">`);
                 debug('视频截图测试成功');
@@ -550,116 +519,55 @@
             }
         }
 
-        // 测试覆盖层可见性的函数
         function testOverlayVisibility() {
             const videoInfoOverlay = document.getElementById('videoInfoOverlay');
             const currentVisibility = videoInfoOverlay.style.visibility;
             
             debug(`当前覆盖层可见性: ${currentVisibility}`);
             
-            // 切换可见性进行测试
             if (currentVisibility === 'hidden' || currentVisibility === '') {
                 videoInfoOverlay.style.visibility = 'visible';
-                updateVideoInfo(); // 确保内容是最新的
+                updateVideoInfo();
                 debug('覆盖层已显示用于测试');
-                setTimeout(() => {
-                    videoInfoOverlay.style.visibility = 'hidden';
-                    debug('覆盖层已重新隐藏');
-                }, 3000);
+                setTimeout(() => { videoInfoOverlay.style.visibility = 'hidden'; debug('覆盖层已重新隐藏'); }, 3000);
             } else {
                 videoInfoOverlay.style.visibility = 'hidden';
                 debug('覆盖层已隐藏');
             }
         }
 
-        // 测试数据收集功能
         function testDataCollection() {
             debug('开始测试数据收集功能...');
             
-            // 模拟一些测试数据
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
-            const currentTime = videoPlayer.currentTime || 5.25; // 如果视频未播放，使用测试时间
+            const currentTime = videoPlayer.currentTime || 5.25;
             
-            // 创建测试注视点数据
             for (let i = 0; i < 10; i++) {
-                const testGazePoint = {
-                    x: 500 + i * 10,
-                    y: 300 + i * 5,
-                    timestamp: new Date().toISOString(),
-                    elapsedTime: Date.now() - startTime,
-                    sessionId,
-                    userId,
-                    videoTimestamp: parseFloat((currentTime + i * 0.1).toFixed(4)),
-                    relativeX: 400 + i * 10,
-                    relativeY: 200 + i * 5,
-                    isVideoActive: true
-                };
-                
-                eyeTrackingData.gazePoints.push(testGazePoint);
+                eyeTrackingData.gazePoints.push({ x: 500 + i * 10, y: 300 + i * 5, timestamp: new Date().toISOString(), elapsedTime: Date.now() - startTime, sessionId, userId, videoTimestamp: parseFloat((currentTime + i * 0.1).toFixed(4)), relativeX: 400 + i * 10, relativeY: 200 + i * 5, isVideoActive: true });
                 gazeCount++;
             }
             
-            // 创建测试眼跳数据
-            const testSaccade = {
-                startPoint: { x: 500, y: 300 },
-                endPoint: { x: 600, y: 350 },
-                distance: 111,
-                duration: 45,
-                velocity: 2467,
-                sessionId,
-                userId,
-                isVideoActive: true,
-                startVideoTimestamp: currentTime,
-                endVideoTimestamp: currentTime + 0.045
-            };
-            eyeTrackingData.saccades.push(testSaccade);
+            eyeTrackingData.saccades.push({ startPoint: { x: 500, y: 300 }, endPoint: { x: 600, y: 350 }, distance: 111, duration: 45, velocity: 2467, sessionId, userId, isVideoActive: true, startVideoTimestamp: currentTime, endVideoTimestamp: currentTime + 0.045 });
             saccadeCount++;
             
-            // 创建测试注视数据
-            const testFixation = {
-                startPoint: { x: 520, y: 310 },
-                endPoint: { x: 525, y: 315 },
-                centerPoint: { x: 523, y: 313 },
-                duration: 250,
-                startTime: new Date().toISOString(),
-                pointCount: 15,
-                sessionId,
-                userId,
-                isVideoActive: true,
-                videoTimestamp: currentTime,
-                endVideoTimestamp: currentTime + 0.25
-            };
+            const testFixation = { startPoint: { x: 520, y: 310 }, endPoint: { x: 525, y: 315 }, centerPoint: { x: 523, y: 313 }, duration: 250, startTime: new Date().toISOString(), pointCount: 15, sessionId, userId, isVideoActive: true, videoTimestamp: currentTime, endVideoTimestamp: currentTime + 0.25 };
             eyeTrackingData.fixations.push(testFixation);
             fixationCount++;
             totalFixationTime += testFixation.duration;
             
             updateStatsDisplay();
             debug(`测试数据已添加 - 注视点: ${eyeTrackingData.gazePoints.length}, 眼跳: ${eyeTrackingData.saccades.length}, 注视: ${eyeTrackingData.fixations.length}`);
-            
-            // 立即尝试保存数据
             saveEyeTrackingData(true);
-            
-            swal('测试完成', `已添加测试数据并尝试保存：\n注视点: ${eyeTrackingData.gazePoints.length}\n眼跳: ${eyeTrackingData.saccades.length}\n注视: ${eyeTrackingData.fixations.length}`, 'info');
+            swal('测试完成', `已添加测试数据并尝试保存。`, 'info');
         }
 
-        // 测试全屏截图功能
         function testFullscreenCapture() {
-            const isFullscreen = document.fullscreenElement !== null || 
-                               document.webkitFullscreenElement !== null || 
-                               document.mozFullScreenElement !== null ||
-                               document.msFullscreenElement !== null;
-            
-            if (!isFullscreen) {
-                swal('提示', '请先进入全屏模式（点击"开始视频实验"按钮）再测试截图功能', 'info');
-                return;
-            }
-            
+            const isFullscreen = !!document.fullscreenElement;
+            if (!isFullscreen) return swal('提示', '请先进入全屏模式再测试截图功能', 'info');
             debug('开始测试全屏截图功能...');
-            
-            // 立即触发一次热力图截图
             if (heatmapInstance && isTracking && isVideoExperimentActive) {
                 captureHeatmapSnapshot();
-                swal('测试', '已触发全屏热力图截图，请查看调试信息和Cloudinary', 'info');
+                swal('测试', '已触发全屏热力图截图', 'info');
             } else {
                 swal('错误', '请确保眼动追踪已启动且视频实验正在进行', 'error');
             }
@@ -669,98 +577,55 @@
         // 眼动数据处理
         // ===========================================
         function gazeDataCallback(data, elapsedTime) {
-            // 如果正在校准或未启动跟踪，则不记录数据
             if (!isTracking || isCalibrating || !data || typeof data.x !== 'number' || typeof data.y !== 'number' || isNaN(data.x) || isNaN(data.y) || data.x < 0 || data.y < 0) return;
-            
-            // 只有在视频实验激活时才记录数据
-            if (!isVideoExperimentActive) {
-                return;
-            }
-            
-            // 检查是否全屏
-            const isFullscreen = document.fullscreenElement !== null || 
-                               document.webkitFullscreenElement !== null || 
-                               document.mozFullScreenElement !== null ||
-                               document.msFullscreenElement !== null;
-            if (!isFullscreen) {
-                return; // 非全屏时不采集热力图
-            }
+            if (!isVideoExperimentActive) return;
             
             const timestamp = new Date().toISOString();
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
-            const fullscreenActive = document.fullscreenElement !== null || 
-                               document.webkitFullscreenElement !== null || 
-                               document.mozFullScreenElement !== null ||
-                               document.msFullscreenElement !== null;
+            const isFullscreen = !!document.fullscreenElement;
 
             let gazePoint = { 
-                x: Math.floor(data.x), 
-                y: Math.floor(data.y), 
-                timestamp, 
-                elapsedTime: elapsedTime || Date.now() - startTime, 
-                sessionId, 
-                userId,
-                videoTimestamp: null,
-                relativeX: null,
-                relativeY: null,
-                isVideoActive: isVideoExperimentActive,
-                isFullscreen: isFullscreen
+                x: Math.floor(data.x), y: Math.floor(data.y), 
+                timestamp, elapsedTime: elapsedTime || Date.now() - startTime, 
+                sessionId, userId, videoTimestamp: null, relativeX: null, relativeY: null,
+                isVideoActive: isVideoExperimentActive, isFullscreen: isFullscreen
             };
 
-            // 检查视频是否正在播放，以关联眼动数据和视频时间戳
-            if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
+            if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
-                
-                if (fullscreenActive) {
-                    // 全屏模式：眼动坐标直接对应屏幕坐标
+                const videoRect = videoPlayer.getBoundingClientRect();
+                if (isFullscreen) {
                     gazePoint.relativeX = gazePoint.x;
                     gazePoint.relativeY = gazePoint.y;
                 } else {
-                    // 窗口模式：计算相对于视频播放器的坐标
-                    const videoRect = videoPlayer.getBoundingClientRect();
                     const relX = gazePoint.x - videoRect.left;
                     const relY = gazePoint.y - videoRect.top;
-
                     if (relX >= 0 && relX <= videoRect.width && relY >= 0 && relY <= videoRect.height) {
                         gazePoint.relativeX = Math.floor(relX);
                         gazePoint.relativeY = Math.floor(relY);
                     }
                 }
-                
-                // 只在每100个点时输出一次调试信息
-                if (gazeCount % 100 === 0) {
-                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${fullscreenActive}`);
-                }
             }
 
             processSaccadeAndFixation(gazePoint);
             eyeTrackingData.gazePoints.push(gazePoint);
-            // 只在全屏视频实验时添加热力图数据
-            if (heatmapInstance && fullscreenActive && isVideoExperimentActive) {
-                heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
-            }
+            
+            // [MODIFIED] 将 value 从 5 改为 1
+            if (heatmapInstance) heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 1 });
+            
             gazeCount++;
-            if (gazeCount % 50 === 0) { // 改为每50个点更新一次，更频繁的反馈
+            if (gazeCount % 100 === 0) {
                 updateStatsDisplay();
                 debug(`已记录 ${gazeCount} 个注视点`);
             }
         }
 
         function processSaccadeAndFixation(gazePoint) {
-            // 校准期间或视频未激活时不处理眼跳和注视数据
             if (isCalibrating || !isVideoExperimentActive) return;
             
             if (!lastGazePoint) {
                 lastGazePoint = gazePoint;
-                currentFixation = { 
-                    startPoint: {...gazePoint}, 
-                    startTime: gazePoint.timestamp, 
-                    pointCount: 1, 
-                    sessionId, 
-                    userId, 
-                    isVideoActive: isVideoExperimentActive,
-                    videoTimestamp: gazePoint.videoTimestamp
-                };
+                currentFixation = { startPoint: {...gazePoint}, startTime: gazePoint.timestamp, pointCount: 1, sessionId, userId, isVideoActive: isVideoExperimentActive, videoTimestamp: gazePoint.videoTimestamp };
                 return;
             }
             const distance = Math.sqrt(Math.pow(gazePoint.x - lastGazePoint.x, 2) + Math.pow(gazePoint.y - lastGazePoint.y, 2));
@@ -770,10 +635,7 @@
                     if (duration > fixationTimeThreshold) {
                         currentFixation.duration = duration;
                         currentFixation.endPoint = {...lastGazePoint};
-                        currentFixation.centerPoint = { 
-                            x: Math.round((currentFixation.startPoint.x + currentFixation.endPoint.x) / 2), 
-                            y: Math.round((currentFixation.startPoint.y + currentFixation.endPoint.y) / 2) 
-                        };
+                        currentFixation.centerPoint = { x: Math.round((currentFixation.startPoint.x + currentFixation.endPoint.x) / 2), y: Math.round((currentFixation.startPoint.y + currentFixation.endPoint.y) / 2) };
                         currentFixation.endVideoTimestamp = lastGazePoint.videoTimestamp;
                         eyeTrackingData.fixations.push({...currentFixation});
                         fixationCount++;
@@ -781,28 +643,9 @@
                     }
                 }
                 const saccadeDuration = new Date(gazePoint.timestamp).getTime() - new Date(lastGazePoint.timestamp).getTime();
-                eyeTrackingData.saccades.push({ 
-                    startPoint: {...lastGazePoint}, 
-                    endPoint: {...gazePoint}, 
-                    distance: Math.round(distance), 
-                    duration: saccadeDuration, 
-                    velocity: saccadeDuration > 0 ? Math.round(distance / saccadeDuration * 1000) : 0, 
-                    sessionId, 
-                    userId,
-                    isVideoActive: isVideoExperimentActive,
-                    startVideoTimestamp: lastGazePoint.videoTimestamp,
-                    endVideoTimestamp: gazePoint.videoTimestamp
-                });
+                eyeTrackingData.saccades.push({ startPoint: {...lastGazePoint}, endPoint: {...gazePoint}, distance: Math.round(distance), duration: saccadeDuration, velocity: saccadeDuration > 0 ? Math.round(distance / saccadeDuration * 1000) : 0, sessionId, userId, isVideoActive: isVideoExperimentActive, startVideoTimestamp: lastGazePoint.videoTimestamp, endVideoTimestamp: gazePoint.videoTimestamp });
                 saccadeCount++;
-                currentFixation = { 
-                    startPoint: {...gazePoint}, 
-                    startTime: gazePoint.timestamp, 
-                    pointCount: 1, 
-                    sessionId, 
-                    userId, 
-                    isVideoActive: isVideoExperimentActive,
-                    videoTimestamp: gazePoint.videoTimestamp
-                };
+                currentFixation = { startPoint: {...gazePoint}, startTime: gazePoint.timestamp, pointCount: 1, sessionId, userId, isVideoActive: isVideoExperimentActive, videoTimestamp: gazePoint.videoTimestamp };
             } else {
                 if (currentFixation) currentFixation.pointCount++;
             }
@@ -820,16 +663,7 @@
         
         function startHeatmapSnapshots() {
             if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval);
-            heatmapSnapshotInterval = setInterval(() => { 
-                // 只有在全屏视频实验激活且追踪运行时才捕获热力图
-                const isFullscreen = document.fullscreenElement !== null || 
-                                   document.webkitFullscreenElement !== null || 
-                                   document.mozFullScreenElement !== null ||
-                                   document.msFullscreenElement !== null;
-                if (heatmapInstance && isTracking && isVideoExperimentActive && isFullscreen) {
-                    captureHeatmapSnapshot(); 
-                }
-            }, 2000);
+            heatmapSnapshotInterval = setInterval(() => { if (heatmapInstance && isTracking && isVideoExperimentActive) captureHeatmapSnapshot(); }, 2000);
         }
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
@@ -841,88 +675,51 @@
             const originalOverlayVisibility = videoInfoOverlay.style.visibility;
             
             try {
-                // 检测是否在全屏模式
-                const isFullscreen = document.fullscreenElement !== null || 
-                                   document.webkitFullscreenElement !== null || 
-                                   document.mozFullScreenElement !== null ||
-                                   document.msFullscreenElement !== null;
-                
+                const isFullscreen = !!document.fullscreenElement;
                 if (!isFullscreen) {
                     debug('不在全屏模式，跳过热力图截图');
-                    return;
-                }
-                
-                // 只在全屏视频实验时进行截图
-                if (!isVideoExperimentActive) {
-                    debug('视频实验未激活，跳过热力图截图');
                     return;
                 }
                 
                 const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
                 const currentVideoTime = originalVideo.currentTime;
                 
-                // 创建截图Canvas - 使用实际全屏尺寸
                 const screenshotCanvas = document.createElement('canvas');
                 const screenshotCtx = screenshotCanvas.getContext('2d');
                 screenshotCanvas.width = window.innerWidth;
                 screenshotCanvas.height = window.innerHeight;
                 
-                debug(`截图Canvas尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
-                
-                // 1. 绘制黑色背景
                 screenshotCtx.fillStyle = '#000000';
                 screenshotCtx.fillRect(0, 0, screenshotCanvas.width, screenshotCanvas.height);
                 
-                // 2. 直接绘制视频内容到全屏Canvas
                 if (originalVideo && !originalVideo.paused && originalVideo.videoWidth > 0 && originalVideo.videoHeight > 0) {
-                    // 计算视频在全屏中的显示尺寸（保持宽高比）
                     const videoAspect = originalVideo.videoWidth / originalVideo.videoHeight;
                     const screenAspect = screenshotCanvas.width / screenshotCanvas.height;
-                    
                     let drawWidth, drawHeight, drawX, drawY;
-                    
                     if (videoAspect > screenAspect) {
-                        // 视频更宽，以宽度为准
                         drawWidth = screenshotCanvas.width;
                         drawHeight = screenshotCanvas.width / videoAspect;
                         drawX = 0;
                         drawY = (screenshotCanvas.height - drawHeight) / 2;
                     } else {
-                        // 视频更高，以高度为准
                         drawHeight = screenshotCanvas.height;
                         drawWidth = screenshotCanvas.height * videoAspect;
                         drawX = (screenshotCanvas.width - drawWidth) / 2;
                         drawY = 0;
                     }
-                    
-                    debug(`视频绘制区域: ${drawX}, ${drawY}, ${drawWidth}x${drawHeight}`);
-                    
-                    // 绘制视频帧
                     screenshotCtx.drawImage(originalVideo, drawX, drawY, drawWidth, drawHeight);
-                } else {
-                    debug('视频未在播放或尺寸无效，跳过热力图截图');
                 }
                 
-                // 3. 获取当前热力图并叠加
                 heatmapContainer.style.visibility = 'hidden';
                 const heatmapCanvas = heatmapContainer.querySelector('canvas');
                 if (heatmapCanvas && heatmapCanvas.width > 0 && heatmapCanvas.height > 0) {
-                    debug(`热力图Canvas尺寸: ${heatmapCanvas.width}x${heatmapCanvas.height}`);
-                    debug('正在叠加热力图...');
-                    
-                    // 调整热力图尺寸以匹配截图canvas，设置适当透明度
-                    screenshotCtx.globalAlpha = 0.8; // 设置热力图透明度
+                    screenshotCtx.globalAlpha = 0.8;
                     screenshotCtx.drawImage(heatmapCanvas, 0, 0, screenshotCanvas.width, screenshotCanvas.height);
-                    screenshotCtx.globalAlpha = 1.0; // 恢复透明度
-                } else {
-                    debug('热力图Canvas无效或为空');
+                    screenshotCtx.globalAlpha = 1.0;
                 }
                 
-                // 4. 添加视频信息覆盖层
                 videoInfoOverlay.style.visibility = 'visible';
                 updateVideoInfo();
-                
-                // 手动绘制覆盖层信息
                 screenshotCtx.font = 'bold 24px Arial';
                 screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.9)';
                 const overlayText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s`;
@@ -931,15 +728,11 @@
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
                 screenshotCtx.fillText(overlayText, 20, 35);
                 
-                // 5. 转换为图片并上传
                 const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.95);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
-                
                 const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s_fullscreen_video`;
-                
-                debug(`准备上传全屏视频热力图，文件名: ${heatmapFileName}, 尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
                 
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
@@ -948,32 +741,13 @@
                 formData.append('public_id', heatmapFileName);
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Cloudinary上传失败: ${errorData.error.message}`);
-                }
+                if (!response.ok) throw new Error(`Cloudinary上传失败`);
                 const data = await response.json();
-                const secureUrl = data.secure_url;
-                debug(`全屏视频热力图上传成功: ${secureUrl}`);
                 
-                // 保存在本地数据中
-                eyeTrackingData.heatmapSnapshots.push({ 
-                    timestamp: new Date().toISOString(), 
-                    storageUrl: secureUrl, 
-                    provider: 'cloudinary', 
-                    sessionId, 
-                    userId,
-                    videoTimestamp: currentVideoTime,
-                    videoFrameCaptured: true,
-                    method: 'direct_video_canvas_with_heatmap',
-                    fileName: heatmapFileName,
-                    imageSize: `${screenshotCanvas.width}x${screenshotCanvas.height}`,
-                    isFullscreen: true,
-                    captureType: 'fullscreen_video_with_heatmap_overlay',
-                    videoDisplaySize: `${originalVideo.videoWidth}x${originalVideo.videoHeight}`
-                });
+                eyeTrackingData.heatmapSnapshots.push({ timestamp: new Date().toISOString(), storageUrl: data.secure_url, provider: 'cloudinary', sessionId, userId, videoTimestamp: currentVideoTime, fileName: heatmapFileName, imageSize: `${screenshotCanvas.width}x${screenshotCanvas.height}`, isFullscreen: true, captureType: 'fullscreen_video_with_heatmap_overlay' });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
+                debug(`全屏视频热力图上传成功: ${data.secure_url}`);
                 
             } catch (error) {
                 console.error("捕获或上传全屏视频热力图快照时出错: ", error);
@@ -986,78 +760,43 @@
 
         function startAutoSave() {
             if (autoSaveInterval) clearInterval(autoSaveInterval);
-            autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 5000); // 改为5秒保存一次，便于调试
+            autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 5000);
             updateCollectionStatus('进行中 (自动)', 'connected');
         }
 
         function stopAutoSave() { if (autoSaveInterval) clearInterval(autoSaveInterval); }
 
         async function saveEyeTrackingData(isManual = false) {
-            if (!firebaseConnected) { 
-                if(isManual) swal('错误', 'Firebase未连接，无法保存。', 'error'); 
-                return; 
-            }
+            if (!firebaseConnected) { if(isManual) swal('错误', 'Firebase未连接，无法保存。', 'error'); return; }
             
             const totalPoints = eyeTrackingData.gazePoints.length + eyeTrackingData.saccades.length + eyeTrackingData.fixations.length;
-            debug(`准备保存数据 - 注视点: ${eyeTrackingData.gazePoints.length}, 眼跳: ${eyeTrackingData.saccades.length}, 注视: ${eyeTrackingData.fixations.length}, 总计: ${totalPoints}`);
-            
-            if (totalPoints === 0) { 
-                debug('没有新数据可保存');
-                if(isManual) swal('提示', '没有新数据可保存。', 'info'); 
-                return; 
-            }
+            if (totalPoints === 0) { if(isManual) swal('提示', '没有新数据可保存。', 'info'); return; }
 
             const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
             
-            // 新的数据结构 - 不包含热力图数据，专注于眼动分析数据
             const payload = { 
-                sessionId, 
-                userId, 
-                timestamp: new Date().toISOString(), 
-                dataType: isManual ? 'manual' : 'auto',
-                experimentType: 'video_eye_tracking', // 实验类型标识
-                videoInfo: {
-                    videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
-                    videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null
-                },
-                // 眼动分析数据
-                gazeData: dataToSave.gazePoints,
-                saccadeData: dataToSave.saccades, 
-                fixationData: dataToSave.fixations,
-                // 校准信息
+                sessionId, userId, timestamp: new Date().toISOString(), dataType: isManual ? 'manual' : 'auto',
+                experimentType: 'video_eye_tracking',
+                videoInfo: { videoUrl: document.getElementById('eyeTrackingVideoPlayer').src, videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null },
+                gazeData: dataToSave.gazePoints, saccadeData: dataToSave.saccades, fixationData: dataToSave.fixations,
                 calibrationInfo: dataToSave.calibrationData,
-                // 统计摘要
-                statistics: {
-                    totalGazePoints: dataToSave.gazePoints.length,
-                    totalSaccades: dataToSave.saccades.length,
-                    totalFixations: dataToSave.fixations.length,
-                    averageFixationDuration: dataToSave.fixations.length > 0 ? 
-                        Math.round(dataToSave.fixations.reduce((sum, f) => sum + f.duration, 0) / dataToSave.fixations.length) : 0,
-                    sessionDuration: Date.now() - startTime
-                }
+                statistics: { totalGazePoints: dataToSave.gazePoints.length, totalSaccades: dataToSave.saccades.length, totalFixations: dataToSave.fixations.length, averageFixationDuration: dataToSave.fixations.length > 0 ? Math.round(dataToSave.fixations.reduce((sum, f) => sum + f.duration, 0) / dataToSave.fixations.length) : 0, sessionDuration: Date.now() - startTime }
             };
             
-            debug(`准备上传Firebase payload:`, JSON.stringify(payload.statistics, null, 2));
-            
-            // 清空数据（热力图数据保持不变，继续用于后续快照）
-            eyeTrackingData.gazePoints = []; 
-            eyeTrackingData.saccades = []; 
-            eyeTrackingData.fixations = [];
+            eyeTrackingData.gazePoints = []; eyeTrackingData.saccades = []; eyeTrackingData.fixations = [];
             
             updateCollectionStatus('保存中...', 'uploading');
             try {
-                // 使用新的集合名称进行保存
                 const docRef = await db.collection("eye_tracking_video_experiment_v1").add(payload);
                 snapshotCount++;
                 updateCollectionStatus('进行中 (自动)', 'connected');
-                debug(`数据快照 #${snapshotCount} 保存成功到新集合 eye_tracking_video_experiment_v1, 文档ID: ${docRef.id}`);
-                if(isManual) swal('成功', `数据已保存到新的实验数据集！\n文档ID: ${docRef.id}`, 'success');
+                debug(`数据快照 #${snapshotCount} 保存成功, 文档ID: ${docRef.id}`);
+                if(isManual) swal('成功', `数据已保存！`, 'success');
             } catch (error) {
                 console.error("Firebase 保存失败: ", error);
                 debug(`数据保存失败: ${error.message}, 正在恢复数据...`);
                 updateCollectionStatus('保存失败', 'disconnected');
                 if(isManual) swal('失败', `数据保存失败！\n\n${error.message}`, 'error');
-                // 恢复数据
                 eyeTrackingData.gazePoints = dataToSave.gazePoints.concat(eyeTrackingData.gazePoints);
                 eyeTrackingData.saccades = dataToSave.saccades.concat(eyeTrackingData.saccades);
                 eyeTrackingData.fixations = dataToSave.fixations.concat(eyeTrackingData.fixations);
@@ -1076,18 +815,11 @@
         
         function PopUpInstruction() {
             if (!isTracking) return swal('提示', '请先启动眼动追踪。', 'info');
-            
-            // 设置校准状态标志
             isCalibrating = true;
-            
             document.getElementById('statsPanel').style.display = 'none';
-            // 隐藏控制按钮避免遮挡校准点
             document.querySelector('.controls').style.display = 'none';
             ClearCanvas();
-            swal({
-                title:"校准说明",
-                text: "请点击屏幕上出现的9个点。您必须在每个点上点击5次，直到它变成黄色。这将校准您的眼动追踪。",
-                buttons:{ cancel: false, confirm: "开始" }
+            swal({ title:"校准说明", text: "请点击屏幕上出现的9个点。您必须在每个点上点击5次，直到它变成黄色。", buttons:{ cancel: false, confirm: "开始" }
             }).then(() => {
                 updateStatus('校准进行中', 'calibrating');
                 debug('开始9点校准流程');
@@ -1110,16 +842,10 @@
                 node.style.backgroundColor = 'yellow';
                 node.setAttribute('disabled', 'disabled');
                 PointCalibrate++;
-                debug(`校准点 ${id} 完成，当前完成数量: ${PointCalibrate}`);
-                
-                // 前8个点点击完后，显示Pt5
                 if (PointCalibrate === 8) {
                     document.getElementById('Pt5').style.display = 'block';
-                    debug('显示第9个校准点 Pt5');
                 }
-                // 只有Pt5点击完才进入精度计算
                 if (PointCalibrate === 9) {
-                    debug('所有校准点完成，开始精度计算');
                     document.querySelectorAll('.Calibration').forEach((i) => { if(i.id !== 'Pt5') i.style.display = 'none'; });
                     calcAccuracy();
                 }
@@ -1127,10 +853,7 @@
         }
 
         function calcAccuracy() {
-            swal({
-                title: "正在计算精度",
-                text: "请不要移动您的鼠标，并尽力注视屏幕中央的点5秒钟。这将帮助我们计算预测的准确性。",
-                closeOnEsc: false, allowOutsideClick: false, closeModal: true
+            swal({ title: "正在计算精度", text: "请不要移动您的鼠标，并尽力注视屏幕中央的点5秒钟。", closeOnEsc: false, allowOutsideClick: false, closeModal: true
             }).then(() => {
                 updateStatus('精度测试中...', 'calibrating');
                 if (webgazer) webgazer.params.storingPoints = true;
@@ -1140,24 +863,15 @@
                     var precisionPercentage = calculatePrecision(past50);
                     
                     document.getElementById('Accuracy').innerHTML = `测试精度: ${precisionPercentage}%`;
-                    eyeTrackingData.calibrationData = {
-                        points: CalibrationPoints,
-                        accuracyPercentage: precisionPercentage,
-                        timestamp: new Date().toISOString()
-                    };
+                    eyeTrackingData.calibrationData = { points: CalibrationPoints, accuracyPercentage: precisionPercentage, timestamp: new Date().toISOString() };
                     
-                    swal({
-                        title: `您的追踪精度为 ${precisionPercentage}%`,
-                        allowOutsideClick: false,
-                        buttons: { cancel: "重新校准", confirm: "接受" }
+                    swal({ title: `您的追踪精度为 ${precisionPercentage}%`, allowOutsideClick: false, buttons: { cancel: "重新校准", confirm: "接受" }
                     }).then(isConfirm => {
                         document.getElementById('statsPanel').style.display = 'block';
-                        // 恢复显示控制按钮
                         document.querySelector('.controls').style.display = 'block';
                         if (isConfirm) {
                             ClearCanvas();
                             updateStatus('运行中', 'ready');
-                            // 校准完成，重置校准状态
                             isCalibrating = false;
                         } else {
                             document.getElementById("Accuracy").innerHTML = "等待校准...";
@@ -1182,8 +896,7 @@
             var xDiff = staringPointX - x50[x];
             var yDiff = staringPointY - y50[x];
             var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
-            var halfWindowHeight = windowHeight / 2;
-            var precision = 100 - (distance / halfWindowHeight * 100);
+            var precision = 100 - (distance / (windowHeight / 2) * 100);
             precisionPercentages[x] = Math.max(0, precision);
           }
           return Math.round(precisionPercentages.reduce((a, b) => a + b, 0) / 50);
@@ -1196,19 +909,15 @@
             ClearCalibration();
             ClearCanvas();
             updateStatus('准备重新校准', 'ready');
-            // 确保重新校准时也隐藏控制按钮
             document.querySelector('.controls').style.display = 'none';
             PopUpInstruction();
         }
 
         function ClearCalibration() {
             document.querySelectorAll('.Calibration').forEach((i) => {
-                i.style.backgroundColor = 'red';
-                i.style.opacity = '0.2';
-                i.removeAttribute('disabled');
+                i.style.backgroundColor = 'red'; i.style.opacity = '0.2'; i.removeAttribute('disabled');
             });
-            CalibrationPoints = {};
-            PointCalibrate = 0;
+            CalibrationPoints = {}; PointCalibrate = 0;
         }
 
         // =======================================================================
@@ -1218,19 +927,9 @@
         function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
         
         function toggleHeatmap() { 
-            // 只允许在全屏视频实验时切换热力图显示
             const heatmapContainer = document.getElementById('heatmapContainer');
-            const isFullscreen = document.fullscreenElement !== null || 
-                               document.webkitFullscreenElement !== null || 
-                               document.mozFullScreenElement !== null ||
-                               document.msFullscreenElement !== null;
-            if (isVideoExperimentActive && isFullscreen) {
-                heatmapContainer.classList.toggle('heatmap-visible');
-                heatmapContainer.style.visibility = heatmapContainer.classList.contains('heatmap-visible') ? 'visible' : 'hidden';
-            } else {
-                heatmapContainer.classList.remove('heatmap-visible');
-                heatmapContainer.style.visibility = 'hidden';
-            }
+            heatmapContainer.classList.toggle('heatmap-visible');
+            heatmapContainer.style.visibility = heatmapContainer.classList.contains('heatmap-visible') ? 'visible' : 'hidden';
         }
         
         function startStatsUpdate() {
@@ -1253,17 +952,7 @@
             try {
                 if (typeof h337 === 'undefined' || typeof swal === 'undefined') throw new Error('依赖库加载失败');
                 if (!await loadWebGazerScript() || typeof webgazer === 'undefined') throw new Error('WebGazer加载失败');
-                // 初始化热力图为全屏尺寸
-                const heatmapContainer = document.getElementById('heatmapContainer');
-                heatmapContainer.style.width = window.innerWidth + 'px';
-                heatmapContainer.style.height = window.innerHeight + 'px';
-                heatmapInstance = h337.create({ 
-                    container: heatmapContainer, 
-                    radius: Math.max(25, window.innerWidth / 50), 
-                    maxOpacity: 0.6, 
-                    minOpacity: 0.1, 
-                    blur: 0.8 
-                });
+                heatmapInstance = h337.create({ container: document.getElementById('heatmapContainer'), radius: 25, maxOpacity: 0.6, minOpacity: 0.1, blur: 0.8 });
                 await testFirebaseConnection();
                 updateStatus('系统就绪', 'ready');
                 document.getElementById('startBtn').disabled = false;
