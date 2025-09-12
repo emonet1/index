@@ -281,7 +281,7 @@
         document.getElementById('overlayUserId').textContent = userId;
 
         // ===========================================
-        // 坐标转换管理器
+        // 坐标转换管理器（修复版本）
         // ===========================================
         class CoordinateTransformer {
             constructor() {
@@ -290,6 +290,7 @@
                 this.scaleFactor = { x: 1, y: 1 };
                 this.transformationMatrix = null;
                 this.lastKnownScreenSize = { width: window.innerWidth, height: window.innerHeight };
+                this.fullscreenOffset = { x: 0, y: 0 }; // 全屏模式下的额外偏移
             }
             
             // 重新校准坐标系统
@@ -325,9 +326,22 @@
                 let transformedX = rawX;
                 let transformedY = rawY;
                 
-                // 应用校准偏移
-                transformedX += this.calibrationOffset.x;
-                transformedY += this.calibrationOffset.y;
+                // WebGazer在全屏模式下可能返回基于文档的坐标，需要转换为视口坐标
+                if (this.isFullscreen) {
+                    // 全屏模式：WebGazer可能返回相对于文档的坐标，需要减去滚动偏移
+                    transformedX = rawX - window.scrollX;
+                    transformedY = rawY - window.scrollY;
+                    
+                    // 应用全屏偏移修正
+                    transformedX += this.fullscreenOffset.x;
+                    transformedY += this.fullscreenOffset.y;
+                    
+                    debug(`全屏坐标转换: 原始(${rawX}, ${rawY}) -> 转换后(${transformedX}, ${transformedY})`);
+                } else {
+                    // 窗口模式：应用校准偏移
+                    transformedX += this.calibrationOffset.x;
+                    transformedY += this.calibrationOffset.y;
+                }
                 
                 // 应用缩放因子（如果需要）
                 if (this.scaleFactor.x !== 1 || this.scaleFactor.y !== 1) {
@@ -344,8 +358,9 @@
                     y: Math.floor(transformedY),
                     original: { x: rawX, y: rawY },
                     applied: {
-                        offset: this.calibrationOffset,
-                        scale: this.scaleFactor
+                        offset: this.isFullscreen ? this.fullscreenOffset : this.calibrationOffset,
+                        scale: this.scaleFactor,
+                        mode: this.isFullscreen ? 'fullscreen' : 'windowed'
                     }
                 };
             }
@@ -354,9 +369,9 @@
             isValidCoordinate(x, y) {
                 return typeof x === 'number' && typeof y === 'number' && 
                        !isNaN(x) && !isNaN(y) && 
-                       x >= -200 && y >= -200 && 
-                       x <= window.innerWidth + 200 && 
-                       y <= window.innerHeight + 200;
+                       x >= -500 && y >= -500 && // 扩大范围以适应全屏模式
+                       x <= window.innerWidth + 500 && 
+                       y <= window.innerHeight + 500;
             }
             
             // 设置校准偏移
@@ -364,6 +379,13 @@
                 this.calibrationOffset.x = offsetX;
                 this.calibrationOffset.y = offsetY;
                 debug(`设置校准偏移: x=${offsetX}, y=${offsetY}`);
+            }
+            
+            // 设置全屏偏移
+            setFullscreenOffset(offsetX, offsetY) {
+                this.fullscreenOffset.x = offsetX;
+                this.fullscreenOffset.y = offsetY;
+                debug(`设置全屏偏移: x=${offsetX}, y=${offsetY}`);
             }
         }
 
@@ -519,13 +541,14 @@
         }
 
         // ===========================================
-        // 全屏状态管理器
+        // 全屏状态管理器（增强版本）
         // ===========================================
         class FullscreenManager {
             constructor(heatmapManager, coordinateTransformer) {
                 this.heatmapManager = heatmapManager;
                 this.coordinateTransformer = coordinateTransformer;
                 this.isTransitioning = false;
+                this.preFullscreenScroll = { x: 0, y: 0 }; // 记录全屏前的滚动位置
                 this.setupEventListeners();
             }
             
@@ -547,12 +570,24 @@
                 try {
                     debug('检测到全屏状态变化，等待DOM稳定...');
                     
+                    // 记录全屏前的滚动位置
+                    if (document.fullscreenElement !== null) {
+                        this.preFullscreenScroll.x = window.scrollX;
+                        this.preFullscreenScroll.y = window.scrollY;
+                        debug(`记录全屏前滚动位置: (${this.preFullscreenScroll.x}, ${this.preFullscreenScroll.y})`);
+                    }
+                    
                     // 等待DOM稳定
                     await this.waitForDOMStable();
                     
                     // 更新状态
                     this.coordinateTransformer.isFullscreen = document.fullscreenElement !== null;
                     debug(`全屏状态更新: ${this.coordinateTransformer.isFullscreen}`);
+                    
+                    // 校准全屏坐标偏移
+                    if (this.coordinateTransformer.isFullscreen) {
+                        this.calibrateFullscreenOffset();
+                    }
                     
                     // 重新校准坐标系统
                     this.coordinateTransformer.recalibrate();
@@ -567,6 +602,62 @@
                 } finally {
                     this.isTransitioning = false;
                 }
+            }
+            
+            // 校准全屏坐标偏移
+            calibrateFullscreenOffset() {
+                debug('开始校准全屏坐标偏移...');
+                
+                // 在全屏模式下，WebGazer可能需要额外的偏移修正
+                // 这里可以根据实际测试结果调整偏移值
+                const offsetX = 0; // 可以根据测试结果调整
+                const offsetY = 0; // 可以根据测试结果调整
+                
+                this.coordinateTransformer.setFullscreenOffset(offsetX, offsetY);
+                
+                // 可以在这里添加自动校准逻辑
+                // 例如：检测屏幕中心点是否对应正确位置
+                this.validateFullscreenCalibration();
+            }
+            
+            // 验证全屏校准
+            validateFullscreenCalibration() {
+                if (!webgazer || !webgazer.isReady()) return;
+                
+                debug('验证全屏校准准确性...');
+                
+                // 临时设置监听器来验证坐标
+                const tempListener = (data, elapsedTime) => {
+                    if (data && data.x && data.y) {
+                        const transformed = this.coordinateTransformer.transform(data.x, data.y);
+                        if (transformed) {
+                            debug(`全屏校准验证: WebGazer(${data.x}, ${data.y}) -> 转换后(${transformed.x}, ${transformed.y})`);
+                            
+                            // 检查转换后的坐标是否在合理范围内
+                            const isValid = transformed.x >= 0 && transformed.x <= window.innerWidth &&
+                                          transformed.y >= 0 && transformed.y <= window.innerHeight;
+                            
+                            if (!isValid) {
+                                debug('⚠️ 全屏坐标转换可能有问题，请检查偏移设置');
+                            } else {
+                                debug('✅ 全屏坐标转换正常');
+                            }
+                        }
+                    }
+                    
+                    // 只验证一次就移除监听器
+                    webgazer.removeGazeListener(tempListener);
+                };
+                
+                webgazer.setGazeListener(tempListener);
+                
+                // 3秒后恢复原始监听器
+                setTimeout(() => {
+                    if (webgazer && typeof webgazer.setGazeListener === 'function') {
+                        webgazer.setGazeListener(gazeDataCallback);
+                        debug('全屏校准验证完成，已恢复原始监听器');
+                    }
+                }, 3000);
             }
             
             handleResize() {
@@ -1082,7 +1173,8 @@
             // 坐标转换
             const transformedPoint = coordinateTransformer.transform(data.x, data.y);
             if (!transformedPoint) {
-                return; // 转换失败
+                debug(`坐标转换失败: (${data.x}, ${data.y})`);
+                return;
             }
             
             const timestamp = new Date().toISOString();
@@ -1132,11 +1224,16 @@
                         data.x,
                         data.y
                     );
-                }
-                
-                // 调试信息
-                if (gazeCount % 100 === 0) {
-                    debug(`注视点: WebGazer(${data.x.toFixed(1)}, ${data.y.toFixed(1)}) -> 转换后(${transformedPoint.x}, ${transformedPoint.y}) -> 视频相对(${gazePoint.relativeX}, ${gazePoint.relativeY})`);
+                    
+                    // 调试信息（减少频率）
+                    if (gazeCount % 200 === 0) {
+                        debug(`注视点: WebGazer(${data.x.toFixed(1)}, ${data.y.toFixed(1)}) -> 转换后(${transformedPoint.x}, ${transformedPoint.y}) -> 视频相对(${gazePoint.relativeX}, ${gazePoint.relativeY})`);
+                    }
+                } else {
+                    // 调试不在视频区域内的点
+                    if (gazeCount % 500 === 0) {
+                        debug(`注视点在视频区域外: 转换后(${transformedPoint.x}, ${transformedPoint.y}), 视频区域: ${videoDisplayArea.x}-${videoDisplayArea.x + videoDisplayArea.width}, ${videoDisplayArea.y}-${videoDisplayArea.y + videoDisplayArea.height}`);
+                    }
                 }
             }
             
@@ -1221,7 +1318,7 @@
         }
 
         // ===========================================
-        // 测试和调试函数
+        // 测试和调试函数（增强版本）
         // ===========================================
         function testCoordinateTransform() {
             if (!coordinateTransformer) {
@@ -1240,11 +1337,15 @@
             ];
             
             let results = '坐标转换测试结果:\n\n';
+            results += `当前模式: ${document.fullscreenElement !== null ? '全屏' : '窗口'}\n`;
+            results += `屏幕尺寸: ${window.innerWidth}x${window.innerHeight}\n`;
+            results += `视频区域: ${videoDisplayArea.x}, ${videoDisplayArea.y}, ${videoDisplayArea.width}x${videoDisplayArea.height}\n\n`;
             
             testPoints.forEach(point => {
                 const transformed = coordinateTransformer.transform(point.x, point.y);
                 if (transformed) {
                     results += `${point.name}: (${point.x}, ${point.y}) -> (${transformed.x}, ${transformed.y})\n`;
+                    results += `  应用变换: ${JSON.stringify(transformed.applied)}\n`;
                 } else {
                     results += `${point.name}: (${point.x}, ${point.y}) -> 转换失败\n`;
                 }
@@ -1586,6 +1687,7 @@
                     averageFixationDuration: dataToSave.fixations.length > 0 ? 
                         Math.round(dataToSave.fixations.reduce((sum, f) => sum + f.duration, 0) / dataToSave.fixations.length) : 0,
                     sessionDuration: Date.now() - startTime
+
                 }
             };
             
