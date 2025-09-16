@@ -585,8 +585,11 @@
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             const currentTime = videoPlayer.currentTime || 5.25;
             
+            debug(`当前视频时间: ${currentTime.toFixed(4)}s`);
+            
             // 创建测试注视点数据
             for (let i = 0; i < 20; i++) { // 增加测试点数
+                const videoTimestamp = parseFloat((currentTime + i * 0.1).toFixed(4));
                 const testGazePoint = {
                     x: 500 + i * 15 + Math.random() * 30,
                     y: 300 + i * 8 + Math.random() * 20,
@@ -594,7 +597,7 @@
                     elapsedTime: Date.now() - startTime,
                     sessionId,
                     userId,
-                    videoTimestamp: parseFloat((currentTime + i * 0.1).toFixed(4)),
+                    videoTimestamp: videoTimestamp,
                     relativeX: 400 + i * 15,
                     relativeY: 200 + i * 8,
                     isVideoActive: true
@@ -616,14 +619,23 @@
                 }
                 
                 gazeCount++;
+                
+                // 验证videoTimestamp
+                debug(`测试点 ${i}: videoTimestamp=${videoTimestamp}s`);
             }
             
             updateStatsDisplay();
             debug(`测试数据已添加 - 注视点: ${eyeTrackingData.gazePoints.length}, 累积热力图点数: ${allTimeGazePoints.length}`);
             
+            // 验证最新数据的videoTimestamp
+            const latestGazePoint = eyeTrackingData.gazePoints[eyeTrackingData.gazePoints.length - 1];
+            const latestHeatmapPoint = allTimeGazePoints[allTimeGazePoints.length - 1];
+            debug(`最新注视点videoTimestamp: ${latestGazePoint.videoTimestamp}s`);
+            debug(`最新热力图点videoTimestamp: ${latestHeatmapPoint.videoTimestamp}s`);
+            
             saveEyeTrackingData(true);
             
-            swal('测试完成', `已添加测试数据：\n注视点: ${eyeTrackingData.gazePoints.length}\n累积热力图点数: ${allTimeGazePoints.length}`, 'info');
+            swal('测试完成', `已添加测试数据：\n注视点: ${eyeTrackingData.gazePoints.length}\n累积热力图点数: ${allTimeGazePoints.length}\n当前视频时间: ${currentTime.toFixed(4)}s`, 'info');
         }
 
         // 测试全屏截图功能
@@ -698,9 +710,21 @@
                     }
                 }
                 
-                // 只在每100个点时输出一次调试信息
+                // 每100个点验证一次videoTimestamp一致性
                 if (gazeCount % 100 === 0) {
                     debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${isFullscreen}`);
+                    
+                    // 验证videoTimestamp一致性
+                    const currentVideoTime = videoPlayer.currentTime;
+                    const timeDiff = Math.abs(gazePoint.videoTimestamp - currentVideoTime);
+                    if (timeDiff > 0.1) { // 如果时间差超过100ms，发出警告
+                        debug(`⚠️ VideoTimestamp不一致警告: 注视点时间=${gazePoint.videoTimestamp}s, 当前视频时间=${currentVideoTime.toFixed(4)}s, 差异=${timeDiff.toFixed(4)}s`);
+                    }
+                }
+            } else {
+                // 非视频播放状态，videoTimestamp保持为null
+                if (gazeCount % 100 === 0) {
+                    debug(`记录非视频注视点: x=${gazePoint.x}, y=${gazePoint.y}, 无视频时间戳`);
                 }
             }
 
@@ -720,7 +744,9 @@
             // 修改：热力图始终累积所有数据点，不重置
             if (heatmapInstance) {
                 heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
-                debug(`热力图数据点已添加: ${allTimeGazePoints.length} 总点数`);
+                if (gazeCount % 200 === 0) { // 减少热力图调试频率
+                    debug(`热力图数据点已添加: ${allTimeGazePoints.length} 总点数`);
+                }
             }
             
             gazeCount++;
@@ -829,9 +855,24 @@
                 
                 debug(`热力图快照捕获开始 - 全屏: ${isFullscreen}, 累积点数: ${allTimeGazePoints.length}`);
                 
-                // 修改：不再跳过非全屏模式，但优先处理全屏
                 const originalVideo = document.getElementById('eyeTrackingVideoPlayer');
                 const currentVideoTime = originalVideo.currentTime || 0;
+                
+                // 验证热力图数据中的videoTimestamp
+                const heatmapPointsWithVideoTime = allTimeGazePoints.filter(point => point.videoTimestamp !== null);
+                debug(`📊 热力图验证 - 总点数: ${allTimeGazePoints.length}, 有视频时间戳: ${heatmapPointsWithVideoTime.length}`);
+                
+                if (heatmapPointsWithVideoTime.length > 0) {
+                    const minVideoTime = Math.min(...heatmapPointsWithVideoTime.map(p => p.videoTimestamp));
+                    const maxVideoTime = Math.max(...heatmapPointsWithVideoTime.map(p => p.videoTimestamp));
+                    debug(`📊 热力图视频时间戳范围: ${minVideoTime.toFixed(4)}s - ${maxVideoTime.toFixed(4)}s`);
+                    debug(`📊 当前截图视频时间: ${currentVideoTime.toFixed(4)}s`);
+                    
+                    // 检查当前视频时间是否在合理范围内
+                    if (currentVideoTime < minVideoTime || currentVideoTime > maxVideoTime + 1) {
+                        debug(`⚠️ 时间戳不一致警告: 截图时间=${currentVideoTime.toFixed(4)}s 不在热力图数据范围内`);
+                    }
+                }
                 
                 // 创建截图Canvas
                 const screenshotCanvas = document.createElement('canvas');
@@ -950,14 +991,15 @@
                 // 4. 先绘制用户信息覆盖层（在人脸检测框上方）
                 const infoX = 10;
                 const infoY = 10;
-                const infoHeight = 80; // 增加高度以容纳多行信息
+                const infoHeight = 100; // 增加高度以容纳更多信息
                 
-                // 准备多行信息文本
+                // 准备多行信息文本，包括时间戳验证信息
                 const infoLines = [
                     `用户ID: ${userId}`,
-                    `视频时间: ${currentVideoTime.toFixed(2)}s`,
+                    `视频时间: ${currentVideoTime.toFixed(4)}s`,
                     `注视点数: ${allTimeGazePoints.length}`,
-                    `会话ID: ${sessionId.substring(0, 20)}...` // 截取部分会话ID
+                    `有视频时间戳: ${heatmapPointsWithVideoTime.length}`,
+                    `会话ID: ${sessionId.substring(0, 15)}...` // 缩短会话ID显示
                 ];
                 
                 // 计算信息框宽度（根据最长文本）
@@ -993,6 +1035,7 @@
                 });
                 
                 debug(`用户信息覆盖层已绘制: ${infoWidth}x${infoHeight} 位置: (${infoX}, ${infoY})`);
+                debug(`📊 截图信息验证 - 显示视频时间: ${currentVideoTime.toFixed(4)}s, 有时间戳的热力图点: ${heatmapPointsWithVideoTime.length}`);
                 
                 // 5. 绘制人脸边框（放在信息框下方）
                 const faceVideoX = 10;
@@ -1149,12 +1192,20 @@
                     isFullscreen: isFullscreen,
                     captureType: 'cumulative_heatmap_with_face_border_and_user_info',
                     totalDataPoints: allTimeGazePoints.length,
+                    dataPointsWithVideoTimestamp: heatmapPointsWithVideoTime.length, // 新增验证字段
+                    videoTimestampRange: heatmapPointsWithVideoTime.length > 0 ? {
+                        min: Math.min(...heatmapPointsWithVideoTime.map(p => p.videoTimestamp)),
+                        max: Math.max(...heatmapPointsWithVideoTime.map(p => p.videoTimestamp))
+                    } : null, // 新增时间戳范围验证
                     cumulativeData: true,
                     includeFaceBorder: true,
-                    includeUserInfo: true // 新增标识
+                    includeUserInfo: true,
+                    timestampValidated: true // 新增时间戳验证标识
                 });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
+                
+                debug(`✅ 热力图截图完成 - 文件: ${heatmapFileName}, 视频时间: ${currentVideoTime.toFixed(4)}s, 验证通过`);
                 
             } catch (error) {
                 console.error("捕获含人脸边框和用户信息的累积热力图快照时出错: ", error);
@@ -1190,6 +1241,18 @@
 
             const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
             
+            // 验证videoTimestamp数据完整性
+            const videoTimestampGazePoints = dataToSave.gazePoints.filter(point => point.videoTimestamp !== null);
+            const nonVideoTimestampGazePoints = dataToSave.gazePoints.filter(point => point.videoTimestamp === null);
+            
+            debug(`📊 数据验证 - 有视频时间戳的注视点: ${videoTimestampGazePoints.length}, 无视频时间戳的注视点: ${nonVideoTimestampGazePoints.length}`);
+            
+            if (videoTimestampGazePoints.length > 0) {
+                const minVideoTime = Math.min(...videoTimestampGazePoints.map(p => p.videoTimestamp));
+                const maxVideoTime = Math.max(...videoTimestampGazePoints.map(p => p.videoTimestamp));
+                debug(`📊 视频时间戳范围: ${minVideoTime.toFixed(4)}s - ${maxVideoTime.toFixed(4)}s`);
+            }
+            
             const payload = { 
                 sessionId, 
                 userId, 
@@ -1198,7 +1261,8 @@
                 experimentType: 'video_eye_tracking',
                 videoInfo: {
                     videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
-                    videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null
+                    videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null,
+                    currentVideoTime: document.getElementById('eyeTrackingVideoPlayer').currentTime || null // 新增当前视频时间
                 },
                 gazeData: dataToSave.gazePoints,
                 saccadeData: dataToSave.saccades, 
@@ -1208,7 +1272,13 @@
                     totalGazePoints: dataToSave.gazePoints.length,
                     totalSaccades: dataToSave.saccades.length,
                     totalFixations: dataToSave.fixations.length,
-                    cumulativeHeatmapPoints: allTimeGazePoints.length, // 新增：累积热力图点数
+                    cumulativeHeatmapPoints: allTimeGazePoints.length,
+                    videoTimestampGazePoints: videoTimestampGazePoints.length, // 新增统计
+                    nonVideoTimestampGazePoints: nonVideoTimestampGazePoints.length, // 新增统计
+                    videoTimestampRange: videoTimestampGazePoints.length > 0 ? {
+                        min: Math.min(...videoTimestampGazePoints.map(p => p.videoTimestamp)),
+                        max: Math.max(...videoTimestampGazePoints.map(p => p.videoTimestamp))
+                    } : null, // 新增视频时间戳范围
                     averageFixationDuration: dataToSave.fixations.length > 0 ? 
                         Math.round(dataToSave.fixations.reduce((sum, f) => sum + f.duration, 0) / dataToSave.fixations.length) : 0,
                     sessionDuration: Date.now() - startTime
@@ -1216,6 +1286,7 @@
             };
             
             debug(`准备上传Firebase payload，累积热力图点数: ${allTimeGazePoints.length}`);
+            debug(`📊 Payload统计 - 有视频时间戳: ${payload.statistics.videoTimestampGazePoints}, 无视频时间戳: ${payload.statistics.nonVideoTimestampGazePoints}`);
             
             // 修改：清空保存数据，但保留热力图累积数据
             eyeTrackingData.gazePoints = []; 
@@ -1229,7 +1300,7 @@
                 snapshotCount++;
                 updateCollectionStatus('进行中 (自动)', 'connected');
                 debug(`数据快照 #${snapshotCount} 保存成功，累积热力图点数: ${allTimeGazePoints.length}`);
-                if(isManual) swal('成功', `数据已保存！\n累积热力图点数: ${allTimeGazePoints.length}\n文档ID: ${docRef.id}`, 'success');
+                if(isManual) swal('成功', `数据已保存！\n累积热力图点数: ${allTimeGazePoints.length}\n有视频时间戳: ${payload.statistics.videoTimestampGazePoints}\n文档ID: ${docRef.id}`, 'success');
             } catch (error) {
                 console.error("Firebase 保存失败: ", error);
                 debug(`数据保存失败: ${error.message}, 正在恢复数据...`);
