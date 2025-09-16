@@ -961,7 +961,26 @@
                             const faceVideoWidth = isFullscreen ? 240 : 320;  // 全屏时稍小一些
                             const faceVideoHeight = isFullscreen ? 180 : 240;
                             const faceVideoX = 10;
-                            const faceVideoY = 10;
+                            const faceVideoY = 50;  // 向下移动，为用户信息留出空间
+                            
+                            // 在人脸框上方添加用户信息
+                            screenshotCtx.font = 'bold 14px Arial';
+                            screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';  // 改为白色半透明背景
+                            const userInfoText = `用户: ${userId.substring(0, 12)}...`;
+                            const sessionInfoText = `会话: ${sessionId.substring(0, 12)}...`;
+                            const userInfoMetrics = screenshotCtx.measureText(userInfoText);
+                            const sessionInfoMetrics = screenshotCtx.measureText(sessionInfoText);
+                            const maxTextWidth = Math.max(userInfoMetrics.width, sessionInfoMetrics.width);
+                            
+                            // 绘制用户信息背景
+                            screenshotCtx.fillRect(faceVideoX, faceVideoY - 40, Math.max(maxTextWidth + 10, faceVideoWidth), 35);
+                            
+                            // 绘制用户信息文字
+                            screenshotCtx.fillStyle = '#2196F3';  // 改为蓝色文字
+                            screenshotCtx.textAlign = 'left';
+                            screenshotCtx.fillText(userInfoText, faceVideoX + 5, faceVideoY - 22);
+                            screenshotCtx.font = 'bold 12px Arial';
+                            screenshotCtx.fillText(sessionInfoText, faceVideoX + 5, faceVideoY - 8);
                             
                             // 绘制人脸视频背景框
                             screenshotCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
@@ -1003,7 +1022,7 @@
                                 }
                             }
                             
-                            // 添加人脸检测状态文字
+                            // 添加人脸检测状态文字（放在人脸框下方）
                             screenshotCtx.font = 'bold 14px Arial';
                             screenshotCtx.fillStyle = '#FFFFFF';
                             screenshotCtx.textAlign = 'left';
@@ -1017,7 +1036,26 @@
                             const placeholderWidth = isFullscreen ? 240 : 320;
                             const placeholderHeight = isFullscreen ? 180 : 240;
                             const placeholderX = 10;
-                            const placeholderY = 10;
+                            const placeholderY = 50;  // 向下移动，为用户信息留出空间
+                            
+                            // 在占位符上方添加用户信息
+                            screenshotCtx.font = 'bold 14px Arial';
+                            screenshotCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';  // 改为白色半透明背景
+                            const userInfoText = `用户: ${userId.substring(0, 12)}...`;
+                            const sessionInfoText = `会话: ${sessionId.substring(0, 12)}...`;
+                            const userInfoMetrics = screenshotCtx.measureText(userInfoText);
+                            const sessionInfoMetrics = screenshotCtx.measureText(sessionInfoText);
+                            const maxTextWidth = Math.max(userInfoMetrics.width, sessionInfoMetrics.width);
+                            
+                            // 绘制用户信息背景
+                            screenshotCtx.fillRect(placeholderX, placeholderY - 40, Math.max(maxTextWidth + 10, placeholderWidth), 35);
+                            
+                            // 绘制用户信息文字
+                            screenshotCtx.fillStyle = '#2196F3';  // 改为蓝色文字
+                            screenshotCtx.textAlign = 'left';
+                            screenshotCtx.fillText(userInfoText, placeholderX + 5, placeholderY - 22);
+                            screenshotCtx.font = 'bold 12px Arial';
+                            screenshotCtx.fillText(sessionInfoText, placeholderX + 5, placeholderY - 8);
                             
                             // 绘制占位符边框
                             screenshotCtx.strokeStyle = '#FF9800';  // 橙色边框表示未检测到
@@ -1049,12 +1087,12 @@
                 // 5. 添加信息覆盖层（确保在最上层）
                 screenshotCtx.font = 'bold 20px Arial';
                 screenshotCtx.fillStyle = 'rgba(255, 0, 0, 0.9)';
-                const overlayText = `用户: ${userId} | 时间: ${currentVideoTime.toFixed(2)}s | 点数: ${allTimeGazePoints.length}`;
+                const overlayText = `时间: ${currentVideoTime.toFixed(2)}s | 点数: ${allTimeGazePoints.length}`;
                 const overlayMetrics = screenshotCtx.measureText(overlayText);
                 
                 // 调整信息覆盖层位置，避免与人脸边框重叠
                 const overlayX = isFullscreen ? 10 : 10;
-                const overlayY = isFullscreen ? 280 : 350;  // 放在人脸框下方
+                const overlayY = isFullscreen ? 320 : 390;  // 进一步向下移动，避免与用户信息重叠
                 
                 screenshotCtx.fillRect(overlayX, overlayY, overlayMetrics.width + 20, 35);
                 screenshotCtx.fillStyle = 'rgba(255, 255, 255, 1)';
