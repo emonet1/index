@@ -32,14 +32,6 @@
         
         const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
         const userId = generateUniqueUserId(); // 每个用户都有唯一ID
-        
-        // 新增：用户信息变量
-        let userInfo = {
-            studentId: '',
-            studentName: '',
-            timestamp: null
-        };
-        
         console.log('会话ID:', sessionId);
         console.log('用户ID:', userId);
 
@@ -74,86 +66,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
-        
-        /* 新增：用户信息收集弹窗样式 */
-        #userInfoModal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 10000;
-        }
-        
-        .user-info-form {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            max-width: 400px;
-            width: 90%;
-            text-align: center;
-        }
-        
-        .user-info-form h3 {
-            color: #2196F3;
-            margin-bottom: 20px;
-            font-size: 24px;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-            text-align: left;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: bold;
-            color: #333;
-            font-size: 14px;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            font-size: 16px;
-            box-sizing: border-box;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: #2196F3;
-            box-shadow: 0 0 5px rgba(33, 150, 243, 0.3);
-        }
-        
-        .form-submit-btn {
-            background: #4CAF50;
-            color: white;
-            padding: 15px 30px;
-            border: none;
-            border-radius: 8px;
-            font-size: 18px;
-            cursor: pointer;
-            width: 100%;
-            margin-top: 10px;
-        }
-        
-        .form-submit-btn:hover {
-            background: #45a049;
-        }
-        
-        .form-submit-btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-        }
-        
         #heatmapContainer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1000; visibility: hidden; }
         #plotting_canvas { position: fixed; top: 0; left: 0; cursor: crosshair; z-index: 900; pointer-events: none; }
         #content { position: relative; z-index: 1; padding: 30px; max-width: 800px; margin: 10px auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -263,31 +175,11 @@
     </style>
 </head>
 <body>
-    <!-- 新增：用户信息收集弹窗 -->
-    <div id="userInfoModal">
-        <div class="user-info-form">
-            <h3>📚 眼动追踪实验</h3>
-            <p style="color: #666; margin-bottom: 25px;">请填写您的基本信息开始实验</p>
-            <div class="form-group">
-                <label for="studentId">学号 *</label>
-                <input type="text" id="studentId" placeholder="请输入您的学号" required>
-            </div>
-            <div class="form-group">
-                <label for="studentName">姓名 *</label>
-                <input type="text" id="studentName" placeholder="请输入您的姓名" required>
-            </div>
-            <button class="form-submit-btn" onclick="submitUserInfo()">开始实验</button>
-        </div>
-    </div>
-
     <div id="status" class="status loading">正在加载库文件...</div>
     <canvas id="plotting_canvas" width="500" height="500"></canvas>
 
     <div id="statsPanel">
         <h4 style="margin: 0 0 8px 0; text-align: center; color: #4CAF50; font-size: 13px;">📊 眼动数据统计</h4>
-        <!-- 新增：用户信息显示 -->
-        <div class="stat-item"><span>学号:</span><span id="studentIdDisplay" class="stat-value" style="font-size: 9px;"></span></div>
-        <div class="stat-item"><span>姓名:</span><span id="studentNameDisplay" class="stat-value" style="font-size: 9px;"></span></div>
         <div class="stat-item"><span>用户ID:</span><span id="userIdDisplay" class="stat-value" style="font-size: 9px; word-break: break-all;"></span></div>
         <div class="stat-item"><span>会话ID:</span><span id="sessionIdDisplay" class="stat-value" style="font-size: 9px; word-break: break-all;"></span></div>
         <div class="stat-item"><span>注视点总数:</span><span id="totalGazes" class="stat-value">0</span></div>
@@ -301,7 +193,6 @@
         <div class="stat-item"><span>系统状态:</span><span id="systemStatus" class="stat-value">加载中</span></div>
         <div class="collection-status disconnected" id="collectionStatus">📈 数据收集: 未开始</div>
         <div class="firebase-status disconnected" id="firebaseStatus">🔥 Firebase: 未连接</div>
-        <!-- ...existing buttons... -->
         <button class="btn test" onclick="testFirebaseConnection()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🧪 测试连接</button>
         <button class="btn test" onclick="forceSaveData()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">💾 强制保存</button>
         <button class="btn toggle" onclick="toggleHeatmap()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🔥 显示/隐藏热力图</button>
@@ -312,12 +203,10 @@
         <button class="btn test" onclick="testFullscreenCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🎬 测试全屏截图</button>
     </div>
 
-    <!-- ...existing elements... -->
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
     <div id="heatmapContainer"></div>
     
     <div class="calibrationDiv">
-        <!-- ...existing calibration points... -->
         <input type="button" class="Calibration" id="Pt1">
         <input type="button" class="Calibration" id="Pt2">
         <input type="button" class="Calibration" id="Pt3">
@@ -330,7 +219,6 @@
     </div>
 
     <div id="content">
-        <!-- ...existing content... -->
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()" disabled>🚀 启动眼动追踪</button>
             <button class="btn" id="calibrateBtn" onclick="PopUpInstruction()" disabled>🎯 开始校准</button>
@@ -349,7 +237,7 @@
                     style="border-radius: 8px; background: #000; max-height: 400px;"
                 ></video>
                 <div id="videoInfoOverlay">
-                    学号: <span id="overlayStudentId"></span> | 姓名: <span id="overlayStudentName"></span> | 时间: <span id="overlayTimestamp">0.00s</span>
+                    用户: <span id="overlayUserId"></span> | 时间: <span id="overlayTimestamp">0.00s</span>
                 </div>
             </div>
             <div style="margin-top: 10px;">
@@ -385,63 +273,8 @@
         document.getElementById('sessionIdDisplay').textContent = sessionId;
         document.getElementById('userIdDisplay').textContent = userId;
         
-        // 新增：用户信息提交函数
-        function submitUserInfo() {
-            const studentId = document.getElementById('studentId').value.trim();
-            const studentName = document.getElementById('studentName').value.trim();
-            
-            if (!studentId || !studentName) {
-                swal('提示', '请填写完整的学号和姓名信息！', 'warning');
-                return;
-            }
-            
-            // 保存用户信息
-            userInfo = {
-                studentId: studentId,
-                studentName: studentName,
-                timestamp: new Date().toISOString()
-            };
-            
-            // 更新显示
-            document.getElementById('studentIdDisplay').textContent = studentId;
-            document.getElementById('studentNameDisplay').textContent = studentName;
-            document.getElementById('overlayStudentId').textContent = studentId;
-            document.getElementById('overlayStudentName').textContent = studentName;
-            
-            // 隐藏弹窗
-            document.getElementById('userInfoModal').style.display = 'none';
-            
-            debug(`用户信息已收集 - 学号: ${studentId}, 姓名: ${studentName}`);
-            
-            // 保存用户信息到Firebase
-            saveUserInfoToFirebase();
-            
-            swal('欢迎', `欢迎 ${studentName} (${studentId}) 参加眼动追踪实验！\n\n请点击"启动眼动追踪"开始实验。`, 'success');
-        }
-        
-        // 新增：保存用户信息到Firebase
-        async function saveUserInfoToFirebase() {
-            try {
-                await db.collection("user_info_video_experiment_v1").add({
-                    sessionId,
-                    userId,
-                    studentId: userInfo.studentId,
-                    studentName: userInfo.studentName,
-                    timestamp: userInfo.timestamp,
-                    experimentType: 'video_eye_tracking',
-                    userAgent: navigator.userAgent,
-                    screenSize: {
-                        width: screen.width,
-                        height: screen.height
-                    }
-                });
-                debug('用户信息已保存到Firebase');
-                updateFirebaseStatus('已保存用户信息', 'connected');
-            } catch (error) {
-                console.error("保存用户信息失败: ", error);
-                debug(`保存用户信息失败: ${error.message}`);
-            }
-        }
+        // 初始化视频信息覆盖层
+        document.getElementById('overlayUserId').textContent = userId;
         
         // ===========================================
         // 核心系统函数
@@ -479,16 +312,13 @@
                 await db.collection("video_experiment_connection_test_v1").add({ 
                     sessionId, 
                     userId, 
-                    // 新增：包含用户信息
-                    studentId: userInfo.studentId || 'not_provided',
-                    studentName: userInfo.studentName || 'not_provided',
                     timestamp: new Date().toISOString(),
                     experimentType: 'video_eye_tracking'
                 });
                 debug('Firebase连接测试成功！');
                 updateFirebaseStatus('连接正常', 'connected');
                 firebaseConnected = true;
-                swal('成功', `Firebase连接测试成功！\n用户: ${userInfo.studentName || '未提供'} (${userInfo.studentId || '未提供'})\n用户ID: ${userId}`, 'success');
+                swal('成功', `Firebase连接测试成功！\n用户ID: ${userId}`, 'success');
             } catch (error) {
                 console.error("Firebase Connection Test Failed: ", error);
                 debug(`Firebase连接测试失败: ${error.message}`);
@@ -1161,16 +991,15 @@
                 // 4. 先绘制用户信息覆盖层（在人脸检测框上方）
                 const infoX = 10;
                 const infoY = 10;
-                const infoHeight = 120; // 增加高度以容纳用户信息
+                const infoHeight = 100; // 增加高度以容纳更多信息
                 
-                // 准备多行信息文本，包括用户信息
+                // 准备多行信息文本，包括时间戳验证信息
                 const infoLines = [
-                    `学号: ${userInfo.studentId || 'N/A'}`,
-                    `姓名: ${userInfo.studentName || 'N/A'}`,
+                    `用户ID: ${userId}`,
                     `视频时间: ${currentVideoTime.toFixed(4)}s`,
                     `注视点数: ${allTimeGazePoints.length}`,
                     `有视频时间戳: ${heatmapPointsWithVideoTime.length}`,
-                    `会话ID: ${sessionId.substring(0, 15)}...`
+                    `会话ID: ${sessionId.substring(0, 15)}...` // 缩短会话ID显示
                 ];
                 
                 // 计算信息框宽度（根据最长文本）
@@ -1331,14 +1160,14 @@
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
                 
-                const heatmapFileName = `${userInfo.studentId || 'unknown'}_${userInfo.studentName || 'unknown'}_${currentVideoTime.toFixed(2)}s_含人脸边框热力图_${allTimeGazePoints.length}点`;
+                const heatmapFileName = `${userId}_${currentVideoTime.toFixed(2)}s_含人脸边框热力图_${allTimeGazePoints.length}点`;
                 
-                debug(`准备上传含用户信息和人脸边框的累积热力图，文件名: ${heatmapFileName}`);
+                debug(`准备上传含人脸边框的累积热力图，文件名: ${heatmapFileName}`);
                 
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
-                formData.append('folder', `含人脸边框热力图/${userInfo.studentId || 'unknown'}_${userInfo.studentName || 'unknown'}/${sessionId}`);
+                formData.append('folder', `含人脸边框热力图/${userId}/${sessionId}`);
                 formData.append('public_id', heatmapFileName);
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
@@ -1348,7 +1177,7 @@
                 }
                 const data = await response.json();
                 const secureUrl = data.secure_url;
-                debug(`含用户信息和人脸边框的累积热力图上传成功: ${secureUrl}`);
+                debug(`含人脸边框的累积热力图上传成功: ${secureUrl}`);
                 
                 eyeTrackingData.heatmapSnapshots.push({ 
                     timestamp: new Date().toISOString(), 
@@ -1356,11 +1185,6 @@
                     provider: 'cloudinary', 
                     sessionId, 
                     userId,
-                    // 新增：包含用户信息
-                    userInfo: {
-                        studentId: userInfo.studentId || 'not_provided',
-                        studentName: userInfo.studentName || 'not_provided'
-                    },
                     videoTimestamp: currentVideoTime,
                     method: 'cumulative_heatmap_rebuild_with_face_detection_and_user_info',
                     fileName: heatmapFileName,
@@ -1368,27 +1192,123 @@
                     isFullscreen: isFullscreen,
                     captureType: 'cumulative_heatmap_with_face_border_and_user_info',
                     totalDataPoints: allTimeGazePoints.length,
-                    dataPointsWithVideoTimestamp: heatmapPointsWithVideoTime.length,
+                    dataPointsWithVideoTimestamp: heatmapPointsWithVideoTime.length, // 新增验证字段
                     videoTimestampRange: heatmapPointsWithVideoTime.length > 0 ? {
                         min: Math.min(...heatmapPointsWithVideoTime.map(p => p.videoTimestamp)),
                         max: Math.max(...heatmapPointsWithVideoTime.map(p => p.videoTimestamp))
-                    } : null,
+                    } : null, // 新增时间戳范围验证
                     cumulativeData: true,
                     includeFaceBorder: true,
                     includeUserInfo: true,
-                    timestampValidated: true
+                    timestampValidated: true // 新增时间戳验证标识
                 });
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
                 
-                debug(`✅ 热力图截图完成 - 用户: ${userInfo.studentName || '未提供'} (${userInfo.studentId || '未提供'}), 文件: ${heatmapFileName}, 视频时间: ${currentVideoTime.toFixed(4)}s, 验证通过`);
+                debug(`✅ 热力图截图完成 - 文件: ${heatmapFileName}, 视频时间: ${currentVideoTime.toFixed(4)}s, 验证通过`);
                 
             } catch (error) {
-                console.error("捕获含用户信息、人脸边框和用户信息的累积热力图快照时出错: ", error);
-                debug(`捕获含用户信息、人脸边框和用户信息的累积热力图快照时出错: ${error.message}`);
+                console.error("捕获含人脸边框和用户信息的累积热力图快照时出错: ", error);
+                debug(`捕获含人脸边框和用户信息的累积热力图快照时出错: ${error.message}`);
             } finally {
                 heatmapContainer.style.visibility = originalVisibility;
                 videoInfoOverlay.style.visibility = originalOverlayVisibility;
+            }
+        }
+
+        function startAutoSave() {
+            if (autoSaveInterval) clearInterval(autoSaveInterval);
+            autoSaveInterval = setInterval(() => saveEyeTrackingData(false), 5000); // 改为5秒保存一次，便于调试
+            updateCollectionStatus('进行中 (自动)', 'connected');
+        }
+
+        function stopAutoSave() { if (autoSaveInterval) clearInterval(autoSaveInterval); }
+
+        async function saveEyeTrackingData(isManual = false) {
+            if (!firebaseConnected) { 
+                if(isManual) swal('错误', 'Firebase未连接，无法保存。', 'error'); 
+                return; 
+            }
+            
+            const totalPoints = eyeTrackingData.gazePoints.length + eyeTrackingData.saccades.length + eyeTrackingData.fixations.length;
+            debug(`准备保存数据 - 注视点: ${eyeTrackingData.gazePoints.length}, 眼跳: ${eyeTrackingData.saccades.length}, 注视: ${eyeTrackingData.fixations.length}, 总计: ${totalPoints}, 热力图累积: ${allTimeGazePoints.length}`);
+            
+            if (totalPoints === 0) { 
+                debug('没有新数据可保存');
+                if(isManual) swal('提示', '没有新数据可保存。', 'info'); 
+                return; 
+            }
+
+            const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
+            
+            // 验证videoTimestamp数据完整性
+            const videoTimestampGazePoints = dataToSave.gazePoints.filter(point => point.videoTimestamp !== null);
+            const nonVideoTimestampGazePoints = dataToSave.gazePoints.filter(point => point.videoTimestamp === null);
+            
+            debug(`📊 数据验证 - 有视频时间戳的注视点: ${videoTimestampGazePoints.length}, 无视频时间戳的注视点: ${nonVideoTimestampGazePoints.length}`);
+            
+            if (videoTimestampGazePoints.length > 0) {
+                const minVideoTime = Math.min(...videoTimestampGazePoints.map(p => p.videoTimestamp));
+                const maxVideoTime = Math.max(...videoTimestampGazePoints.map(p => p.videoTimestamp));
+                debug(`📊 视频时间戳范围: ${minVideoTime.toFixed(4)}s - ${maxVideoTime.toFixed(4)}s`);
+            }
+            
+            const payload = { 
+                sessionId, 
+                userId, 
+                timestamp: new Date().toISOString(), 
+                dataType: isManual ? 'manual' : 'auto',
+                experimentType: 'video_eye_tracking',
+                videoInfo: {
+                    videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
+                    videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null,
+                    currentVideoTime: document.getElementById('eyeTrackingVideoPlayer').currentTime || null // 新增当前视频时间
+                },
+                gazeData: dataToSave.gazePoints,
+                saccadeData: dataToSave.saccades, 
+                fixationData: dataToSave.fixations,
+                calibrationInfo: dataToSave.calibrationData,
+                statistics: {
+                    totalGazePoints: dataToSave.gazePoints.length,
+                    totalSaccades: dataToSave.saccades.length,
+                    totalFixations: dataToSave.fixations.length,
+                    cumulativeHeatmapPoints: allTimeGazePoints.length,
+                    videoTimestampGazePoints: videoTimestampGazePoints.length, // 新增统计
+                    nonVideoTimestampGazePoints: nonVideoTimestampGazePoints.length, // 新增统计
+                    videoTimestampRange: videoTimestampGazePoints.length > 0 ? {
+                        min: Math.min(...videoTimestampGazePoints.map(p => p.videoTimestamp)),
+                        max: Math.max(...videoTimestampGazePoints.map(p => p.videoTimestamp))
+                    } : null, // 新增视频时间戳范围
+                    averageFixationDuration: dataToSave.fixations.length > 0 ? 
+                        Math.round(dataToSave.fixations.reduce((sum, f) => sum + f.duration, 0) / dataToSave.fixations.length) : 0,
+                    sessionDuration: Date.now() - startTime
+                }
+            };
+            
+            debug(`准备上传Firebase payload，累积热力图点数: ${allTimeGazePoints.length}`);
+            debug(`📊 Payload统计 - 有视频时间戳: ${payload.statistics.videoTimestampGazePoints}, 无视频时间戳: ${payload.statistics.nonVideoTimestampGazePoints}`);
+            
+            // 修改：清空保存数据，但保留热力图累积数据
+            eyeTrackingData.gazePoints = []; 
+            eyeTrackingData.saccades = []; 
+            eyeTrackingData.fixations = [];
+            // 注意：不清空 allTimeGazePoints，保持热力图数据累积
+            
+            updateCollectionStatus('保存中...', 'uploading');
+            try {
+                const docRef = await db.collection("eye_tracking_video_experiment_v1").add(payload);
+                snapshotCount++;
+                updateCollectionStatus('进行中 (自动)', 'connected');
+                debug(`数据快照 #${snapshotCount} 保存成功，累积热力图点数: ${allTimeGazePoints.length}`);
+                if(isManual) swal('成功', `数据已保存！\n累积热力图点数: ${allTimeGazePoints.length}\n有视频时间戳: ${payload.statistics.videoTimestampGazePoints}\n文档ID: ${docRef.id}`, 'success');
+            } catch (error) {
+                console.error("Firebase 保存失败: ", error);
+                debug(`数据保存失败: ${error.message}, 正在恢复数据...`);
+                updateCollectionStatus('保存失败', 'disconnected');
+                if(isManual) swal('失败', `数据保存失败！\n\n${error.message}`, 'error');
+                eyeTrackingData.gazePoints = dataToSave.gazePoints.concat(eyeTrackingData.gazePoints);
+                eyeTrackingData.saccades = dataToSave.saccades.concat(eyeTrackingData.saccades);
+                eyeTrackingData.fixations = dataToSave.fixations.concat(eyeTrackingData.fixations);
             }
         }
 
@@ -1578,18 +1498,56 @@
                 librariesLoaded = true;
                 ClearCanvas();
                 setupVideoPlayer();
-                
-                // 在系统初始化完成后显示用户信息收集弹窗
-                document.getElementById('userInfoModal').style.display = 'flex';
             } catch (error) {
                 updateStatus('初始化失败', 'error');
                 swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
             }
         }
 
-        // 恢复原来的页面加载逻辑，自动初始化系统
+        async function startEyeTracking() {
+            if (!librariesLoaded) return;
+            const startBtn = document.getElementById('startBtn');
+            startBtn.disabled = true;
+            updateStatus('初始化WebGazer...', 'initializing');
+            try {
+                await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
+                webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
+                isTracking = true; startTime = Date.now(); webgazerReady = true;
+                if (firebaseConnected) startAutoSave();
+                startHeatmapSnapshots(); startStatsUpdate();
+                updateStatus('运行中', 'ready');
+                document.getElementById('calibrateBtn').disabled = false;
+                startBtn.textContent = '✅ 运行中';
+                swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
+            } catch (error) {
+                console.error("启动眼动追踪失败:", error);
+                updateStatus('启动失败', 'error');
+                startBtn.disabled = false;
+                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
+            }
+        }
+
+        async function performStop() {
+            if (firebaseConnected) await saveEyeTrackingData(true);
+            isTracking = false;
+            stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
+            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                webgazer.end();
+                debug("WebGazer.end() 已调用，停止追踪。");
+            }
+            ClearCalibration();
+            ClearCanvas();
+            
+            // 新增：保留热力图累积数据，只重置显示
+            debug(`停止时保留 ${allTimeGazePoints.length} 个累积热力图数据点`);
+            
+            updateStatus('已停止', 'error');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
+            document.getElementById('calibrateBtn').disabled = true;
+        }
+
         window.addEventListener('load', initializeSystem);
-        
         window.addEventListener('error', (e) => debug(`全局错误: ${e.message}`));
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
         window.addEventListener('beforeunload', (e) => {
