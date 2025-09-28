@@ -336,9 +336,7 @@
                     sessionId, 
                     userId, 
                     timestamp: new Date().toISOString(),
-                    experimentType: 'video_eye_tracking',
-                    studentName: studentName || null,
-                    studentId: studentIdNumber || null
+                    experimentType: 'video_eye_tracking'
                 });
                 debug('Firebase连接测试成功！');
                 updateFirebaseStatus('连接正常', 'connected');
