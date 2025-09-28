@@ -488,7 +488,7 @@
                 debug('Firebase连接测试成功！');
                 updateFirebaseStatus('连接正常', 'connected');
                 firebaseConnected = true;
-                swal('成功', `Firebase连接测试成功！\n用户: ${userInfo.studentName} (${userInfo.studentId})\n用户ID: ${userId}`, 'success');
+                swal('成功', `Firebase连接测试成功！\n用户: ${userInfo.studentName || '未提供'} (${userInfo.studentId || '未提供'})\n用户ID: ${userId}`, 'success');
             } catch (error) {
                 console.error("Firebase Connection Test Failed: ", error);
                 debug(`Firebase连接测试失败: ${error.message}`);
@@ -1165,8 +1165,8 @@
                 
                 // 准备多行信息文本，包括用户信息
                 const infoLines = [
-                    `学号: ${userInfo.studentId}`,
-                    `姓名: ${userInfo.studentName}`,
+                    `学号: ${userInfo.studentId || 'N/A'}`,
+                    `姓名: ${userInfo.studentName || 'N/A'}`,
                     `视频时间: ${currentVideoTime.toFixed(4)}s`,
                     `注视点数: ${allTimeGazePoints.length}`,
                     `有视频时间戳: ${heatmapPointsWithVideoTime.length}`,
@@ -1331,14 +1331,14 @@
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
                 
-                const heatmapFileName = `${userInfo.studentId}_${userInfo.studentName}_${currentVideoTime.toFixed(2)}s_含人脸边框热力图_${allTimeGazePoints.length}点`;
+                const heatmapFileName = `${userInfo.studentId || 'unknown'}_${userInfo.studentName || 'unknown'}_${currentVideoTime.toFixed(2)}s_含人脸边框热力图_${allTimeGazePoints.length}点`;
                 
                 debug(`准备上传含用户信息和人脸边框的累积热力图，文件名: ${heatmapFileName}`);
                 
                 const formData = new FormData();
                 formData.append('file', imageDataUrl);
                 formData.append('upload_preset', uploadPreset);
-                formData.append('folder', `含人脸边框热力图/${userInfo.studentId}_${userInfo.studentName}/${sessionId}`);
+                formData.append('folder', `含人脸边框热力图/${userInfo.studentId || 'unknown'}_${userInfo.studentName || 'unknown'}/${sessionId}`);
                 formData.append('public_id', heatmapFileName);
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
@@ -1358,8 +1358,8 @@
                     userId,
                     // 新增：包含用户信息
                     userInfo: {
-                        studentId: userInfo.studentId,
-                        studentName: userInfo.studentName
+                        studentId: userInfo.studentId || 'not_provided',
+                        studentName: userInfo.studentName || 'not_provided'
                     },
                     videoTimestamp: currentVideoTime,
                     method: 'cumulative_heatmap_rebuild_with_face_detection_and_user_info',
@@ -1381,7 +1381,7 @@
                 heatmapSnapshotCount++;
                 updateStatsDisplay();
                 
-                debug(`✅ 热力图截图完成 - 用户: ${userInfo.studentName} (${userInfo.studentId}), 文件: ${heatmapFileName}, 视频时间: ${currentVideoTime.toFixed(4)}s, 验证通过`);
+                debug(`✅ 热力图截图完成 - 用户: ${userInfo.studentName || '未提供'} (${userInfo.studentId || '未提供'}), 文件: ${heatmapFileName}, 视频时间: ${currentVideoTime.toFixed(4)}s, 验证通过`);
                 
             } catch (error) {
                 console.error("捕获含用户信息、人脸边框和用户信息的累积热力图快照时出错: ", error);
@@ -1431,17 +1431,17 @@
                 librariesLoaded = true;
                 ClearCanvas();
                 setupVideoPlayer();
+                
+                // 在系统初始化完成后显示用户信息收集弹窗
+                document.getElementById('userInfoModal').style.display = 'flex';
             } catch (error) {
                 updateStatus('初始化失败', 'error');
                 swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
             }
         }
 
-        // 页面加载时不自动初始化，等待用户信息收集完成
-        window.addEventListener('load', () => {
-            // 显示用户信息收集弹窗
-            document.getElementById('userInfoModal').style.display = 'flex';
-        });
+        // 恢复原来的页面加载逻辑，自动初始化系统
+        window.addEventListener('load', initializeSystem);
         
         window.addEventListener('error', (e) => debug(`全局错误: ${e.message}`));
         window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
