@@ -172,6 +172,21 @@
             display: inline-block;
             width: 100%;
         }
+        .user-info-form {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            border: 1px solid #c8e6c9;
+        }
+        .user-info-form input {
+            width: 45%;
+            padding: 8px;
+            margin: 5px 5px 10px 0;
+            border: 1px solid #bdbdbd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -219,6 +234,11 @@
     </div>
 
     <div id="content">
+        <div class="user-info-form" id="userInfoForm">
+            <input type="text" id="studentNameInput" placeholder="请输入姓名">
+            <input type="text" id="studentIdInput" placeholder="请输入学号">
+            <button class="btn" id="submitUserInfoBtn" onclick="submitUserInfo()" style="padding: 8px 16px; font-size: 14px;">✅ 确认信息</button>
+        </div>
         <div class="controls">
             <button class="btn" id="startBtn" onclick="startEyeTracking()" disabled>🚀 启动眼动追踪</button>
             <button class="btn" id="calibrateBtn" onclick="PopUpInstruction()" disabled>🎯 开始校准</button>
@@ -255,6 +275,9 @@
         let startTime = Date.now();
         let isTracking = false, webgazerReady = false, debugMode = false, librariesLoaded = false, firebaseConnected = false;
         let isCalibrating = false, isVideoExperimentActive = false; // 新增状态标志
+        let studentName = '';
+        let studentIdNumber = '';
+        let isUserInfoComplete = false;
         
         var PointCalibrate = 0;
         var CalibrationPoints = {};
@@ -313,7 +336,9 @@
                     sessionId, 
                     userId, 
                     timestamp: new Date().toISOString(),
-                    experimentType: 'video_eye_tracking'
+                    experimentType: 'video_eye_tracking',
+                    studentName: studentName || null,
+                    studentId: studentIdNumber || null
                 });
                 debug('Firebase连接测试成功！');
                 updateFirebaseStatus('连接正常', 'connected');
@@ -1259,6 +1284,10 @@
                 timestamp: new Date().toISOString(), 
                 dataType: isManual ? 'manual' : 'auto',
                 experimentType: 'video_eye_tracking',
+                studentInfo: {
+                    name: studentName,
+                    studentId: studentIdNumber
+                },
                 videoInfo: {
                     videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
                     videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null,
@@ -1494,7 +1523,7 @@
                 heatmapInstance = h337.create({ container: document.getElementById('heatmapContainer'), radius: 25, maxOpacity: 0.6, minOpacity: 0.1, blur: 0.8 });
                 await testFirebaseConnection();
                 updateStatus('系统就绪', 'ready');
-                document.getElementById('startBtn').disabled = false;
+                document.getElementById('startBtn').disabled = !(librariesLoaded = true && isUserInfoComplete);
                 librariesLoaded = true;
                 ClearCanvas();
                 setupVideoPlayer();
@@ -1507,6 +1536,10 @@
         async function startEyeTracking() {
             if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
+            if (!isUserInfoComplete) {
+                swal('提示', '请先填写姓名和学号并确认。', 'warning');
+                return;
+            }
             startBtn.disabled = true;
             updateStatus('初始化WebGazer...', 'initializing');
             try {
@@ -1561,6 +1594,27 @@
                 document.visibilityState === 'hidden' ? webgazer.pause() : webgazer.resume();
             }
         });
+        function submitUserInfo() {
+            const nameInput = document.getElementById('studentNameInput');
+            const idInput = document.getElementById('studentIdInput');
+            const name = nameInput.value.trim();
+            const id = idInput.value.trim();
+            if (!name || !id) {
+                swal('提示', '请完整填写姓名和学号。', 'warning');
+                return;
+            }
+            studentName = name;
+            studentIdNumber = id;
+            isUserInfoComplete = true;
+            nameInput.disabled = true;
+            idInput.disabled = true;
+            document.getElementById('submitUserInfoBtn').disabled = true;
+            document.getElementById('submitUserInfoBtn').textContent = '✅ 信息已确认';
+            if (librariesLoaded) {
+                document.getElementById('startBtn').disabled = false;
+            }
+            swal('成功', '信息已确认，可启动眼动追踪。', 'success');
+        }
     </script>
 </body>
 </html>
