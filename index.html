@@ -693,7 +693,11 @@
             // 修改：如果未启动追踪，则不记录数据
             if (!isTracking) return;
 
-            const timestamp = new Date().toISOString();
+            // 修复：改进时间戳生成
+            const now = new Date();
+            const timestamp = now.toISOString();
+            const preciseElapsedTime = elapsedTime || (Date.now() - startTime);
+            
             const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
             const isFullscreen = document.fullscreenElement !== null || 
                                document.webkitFullscreenElement !== null || 
@@ -703,20 +707,32 @@
             let gazePoint = { 
                 x: Math.floor(data.x), 
                 y: Math.floor(data.y), 
-                timestamp, 
-                elapsedTime: elapsedTime || Date.now() - startTime, 
-                sessionId, 
-                userId,
+                timestamp: timestamp, // 确保时间戳总是有值
+                elapsedTime: preciseElapsedTime, 
+                sessionId: sessionId, 
+                userId: userId,
                 videoTimestamp: null,
                 relativeX: null,
                 relativeY: null,
                 isVideoActive: isVideoExperimentActive,
-                isFullscreen: isFullscreen
+                isFullscreen: isFullscreen,
+                // 修复：添加更多时间戳信息用于调试
+                timestampMs: now.getTime(),
+                sessionStartTime: startTime,
+                timeSinceStart: preciseElapsedTime
             };
 
-            // 检查视频是否正在播放，以关联眼动数据和视频时间戳
+            // 改进视频时间戳处理
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
-                gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
+                const currentVideoTime = videoPlayer.currentTime;
+                // 修复：确保videoTimestamp总是有效数字
+                gazePoint.videoTimestamp = parseFloat(currentVideoTime.toFixed(4));
+                
+                // 验证videoTimestamp的有效性
+                if (isNaN(gazePoint.videoTimestamp) || gazePoint.videoTimestamp < 0) {
+                    debug(`⚠️ 无效的videoTimestamp: ${gazePoint.videoTimestamp}, 重置为0`);
+                    gazePoint.videoTimestamp = 0;
+                }
                 
                 if (isFullscreen) {
                     gazePoint.relativeX = gazePoint.x;
@@ -732,41 +748,41 @@
                     }
                 }
                 
-                // 每100个点验证一次videoTimestamp一致性
                 if (gazeCount % 100 === 0) {
-                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${isFullscreen}`);
+                    debug(`记录注视点: x=${gazePoint.x}, y=${gazePoint.y}, 视频时间=${gazePoint.videoTimestamp}s, 全屏=${isFullscreen}, 时间戳=${timestamp}`);
                     
-                    // 验证videoTimestamp一致性
-                    const currentVideoTime = videoPlayer.currentTime;
                     const timeDiff = Math.abs(gazePoint.videoTimestamp - currentVideoTime);
-                    if (timeDiff > 0.1) { // 如果时间差超过100ms，发出警告
+                    if (timeDiff > 0.1) {
                         debug(`⚠️ VideoTimestamp不一致警告: 注视点时间=${gazePoint.videoTimestamp}s, 当前视频时间=${currentVideoTime.toFixed(4)}s, 差异=${timeDiff.toFixed(4)}s`);
                     }
                 }
             } else {
-                // 非视频播放状态，videoTimestamp保持为null
                 if (gazeCount % 100 === 0) {
-                    debug(`记录非视频注视点: x=${gazePoint.x}, y=${gazePoint.y}, 无视频时间戳`);
+                    debug(`记录非视频注视点: x=${gazePoint.x}, y=${gazePoint.y}, 时间戳=${timestamp}`);
                 }
             }
 
-            // 修改：不再根据视频状态限制数据记录，只要追踪开始就记录
+            // 验证所有关键字段都有值
+            if (!gazePoint.timestamp || !gazePoint.sessionId || !gazePoint.userId) {
+                debug(`⚠️ 关键字段缺失: timestamp=${gazePoint.timestamp}, sessionId=${gazePoint.sessionId}, userId=${gazePoint.userId}`);
+                return; // 跳过无效数据点
+            }
+
             processSaccadeAndFixation(gazePoint);
             eyeTrackingData.gazePoints.push(gazePoint);
             
-            // 新增：同时添加到持久化热力图数据中（永不清空）
             allTimeGazePoints.push({
                 x: gazePoint.x,
                 y: gazePoint.y,
                 timestamp: gazePoint.timestamp,
                 videoTimestamp: gazePoint.videoTimestamp,
-                isVideoActive: gazePoint.isVideoActive
+                isVideoActive: gazePoint.isVideoActive,
+                timestampMs: gazePoint.timestampMs // 添加毫秒时间戳用于排序
             });
             
-            // 修改：热力图始终累积所有数据点，不重置
             if (heatmapInstance) {
                 heatmapInstance.addData({ x: gazePoint.x, y: gazePoint.y, value: 5 });
-                if (gazeCount % 200 === 0) { // 减少热力图调试频率
+                if (gazeCount % 200 === 0) {
                     debug(`热力图数据点已添加: ${allTimeGazePoints.length} 总点数`);
                 }
             }
@@ -1267,11 +1283,25 @@
 
             const dataToSave = JSON.parse(JSON.stringify(eyeTrackingData));
             
-            // 验证videoTimestamp数据完整性
-            const videoTimestampGazePoints = dataToSave.gazePoints.filter(point => point.videoTimestamp !== null);
-            const nonVideoTimestampGazePoints = dataToSave.gazePoints.filter(point => point.videoTimestamp === null);
+            // 修复：验证和清理时间戳数据
+            const validGazePoints = dataToSave.gazePoints.filter(point => {
+                const hasValidTimestamp = point.timestamp && typeof point.timestamp === 'string' && point.timestamp.length > 0;
+                const hasValidCoords = typeof point.x === 'number' && typeof point.y === 'number' && !isNaN(point.x) && !isNaN(point.y);
+                
+                if (!hasValidTimestamp) {
+                    debug(`⚠️ 发现无效时间戳的注视点: ${JSON.stringify(point)}`);
+                }
+                if (!hasValidCoords) {
+                    debug(`⚠️ 发现无效坐标的注视点: ${JSON.stringify(point)}`);
+                }
+                
+                return hasValidTimestamp && hasValidCoords;
+            });
             
-            debug(`📊 数据验证 - 有视频时间戳的注视点: ${videoTimestampGazePoints.length}, 无视频时间戳的注视点: ${nonVideoTimestampGazePoints.length}`);
+            const videoTimestampGazePoints = validGazePoints.filter(point => point.videoTimestamp !== null && !isNaN(point.videoTimestamp));
+            const nonVideoTimestampGazePoints = validGazePoints.filter(point => point.videoTimestamp === null || isNaN(point.videoTimestamp));
+            
+            debug(`📊 数据验证 - 总注视点: ${dataToSave.gazePoints.length}, 有效注视点: ${validGazePoints.length}, 有视频时间戳: ${videoTimestampGazePoints.length}, 无视频时间戳: ${nonVideoTimestampGazePoints.length}`);
             
             if (videoTimestampGazePoints.length > 0) {
                 const minVideoTime = Math.min(...videoTimestampGazePoints.map(p => p.videoTimestamp));
@@ -1279,56 +1309,62 @@
                 debug(`📊 视频时间戳范围: ${minVideoTime.toFixed(4)}s - ${maxVideoTime.toFixed(4)}s`);
             }
             
+            // 修复：生成完整的时间戳信息
+            const now = new Date();
             const payload = { 
-                studentId,
-                studentName,
-                sessionId, 
-                userId, 
-                timestamp: new Date().toISOString(), 
+                studentId: studentId,
+                studentName: studentName,
+                sessionId: sessionId, 
+                userId: userId, 
+                timestamp: now.toISOString(), // 确保主时间戳总是有效
+                timestampMs: now.getTime(), // 添加毫秒时间戳
                 dataType: isManual ? 'manual' : 'auto',
                 experimentType: 'video_eye_tracking',
                 videoInfo: {
                     videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
                     videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null,
-                    currentVideoTime: document.getElementById('eyeTrackingVideoPlayer').currentTime || null // 新增当前视频时间
+                    currentVideoTime: document.getElementById('eyeTrackingVideoPlayer').currentTime || null
                 },
-                gazeData: dataToSave.gazePoints,
+                gazeData: validGazePoints, // 使用验证过的数据
                 saccadeData: dataToSave.saccades, 
                 fixationData: dataToSave.fixations,
                 calibrationInfo: dataToSave.calibrationData,
                 statistics: {
-                    totalGazePoints: dataToSave.gazePoints.length,
+                    totalGazePoints: validGazePoints.length,
+                    originalGazePoints: dataToSave.gazePoints.length,
+                    filteredOutPoints: dataToSave.gazePoints.length - validGazePoints.length,
                     totalSaccades: dataToSave.saccades.length,
                     totalFixations: dataToSave.fixations.length,
                     cumulativeHeatmapPoints: allTimeGazePoints.length,
-                    videoTimestampGazePoints: videoTimestampGazePoints.length, // 新增统计
-                    nonVideoTimestampGazePoints: nonVideoTimestampGazePoints.length, // 新增统计
+                    videoTimestampGazePoints: videoTimestampGazePoints.length,
+                    nonVideoTimestampGazePoints: nonVideoTimestampGazePoints.length,
                     videoTimestampRange: videoTimestampGazePoints.length > 0 ? {
                         min: Math.min(...videoTimestampGazePoints.map(p => p.videoTimestamp)),
                         max: Math.max(...videoTimestampGazePoints.map(p => p.videoTimestamp))
-                    } : null, // 新增视频时间戳范围
+                    } : null,
                     averageFixationDuration: dataToSave.fixations.length > 0 ? 
                         Math.round(dataToSave.fixations.reduce((sum, f) => sum + f.duration, 0) / dataToSave.fixations.length) : 0,
-                    sessionDuration: Date.now() - startTime
+                    sessionDuration: Date.now() - startTime,
+                    dataQuality: {
+                        validTimestampRatio: validGazePoints.length / Math.max(1, dataToSave.gazePoints.length),
+                        videoTimestampRatio: videoTimestampGazePoints.length / Math.max(1, validGazePoints.length)
+                    }
                 }
             };
             
-            debug(`准备上传Firebase payload，累积热力图点数: ${allTimeGazePoints.length}`);
-            debug(`📊 Payload统计 - 有视频时间戳: ${payload.statistics.videoTimestampGazePoints}, 无视频时间戳: ${payload.statistics.nonVideoTimestampGazePoints}`);
+            debug(`准备上传Firebase payload，数据质量 - 有效率: ${(payload.statistics.dataQuality.validTimestampRatio * 100).toFixed(1)}%, 视频时间戳率: ${(payload.statistics.dataQuality.videoTimestampRatio * 100).toFixed(1)}%`);
             
-            // 修改：清空保存数据，但保留热力图累积数据
             eyeTrackingData.gazePoints = []; 
             eyeTrackingData.saccades = []; 
             eyeTrackingData.fixations = [];
-            // 注意：不清空 allTimeGazePoints，保持热力图数据累积
             
             updateCollectionStatus('保存中...', 'uploading');
             try {
-                const docRef = await db.collection("eye_tracking_video_experiment_v1").add(payload);
+                const docRef = await db.collection("eye_tracking_video_experiment_v2").add(payload); // 使用v2避免与旧数据混淆
                 snapshotCount++;
                 updateCollectionStatus('进行中 (自动)', 'connected');
-                debug(`数据快照 #${snapshotCount} 保存成功，累积热力图点数: ${allTimeGazePoints.length}`);
-                if(isManual) swal('成功', `数据已保存！\n累积热力图点数: ${allTimeGazePoints.length}\n有视频时间戳: ${payload.statistics.videoTimestampGazePoints}\n文档ID: ${docRef.id}`, 'success');
+                debug(`数据快照 #${snapshotCount} 保存成功，数据质量验证通过`);
+                if(isManual) swal('成功', `数据已保存！\n有效注视点: ${validGazePoints.length}/${payload.statistics.originalGazePoints}\n有视频时间戳: ${payload.statistics.videoTimestampGazePoints}\n累积热力图点数: ${allTimeGazePoints.length}\n文档ID: ${docRef.id}`, 'success');
             } catch (error) {
                 console.error("Firebase 保存失败: ", error);
                 debug(`数据保存失败: ${error.message}, 正在恢复数据...`);
@@ -1409,17 +1445,35 @@
                 closeOnEsc: false, allowOutsideClick: false, closeModal: true
             }).then(() => {
                 updateStatus('精度测试中...', 'calibrating');
-                if (webgazer) webgazer.params.storingPoints = true;
+                if (webgazer) {
+                    webgazer.params.storingPoints = true;
+                    debug('开始收集精度测试点，存储5秒钟的注视数据');
+                }
                 sleep(5000).then(() => {
-                    if (webgazer) webgazer.params.storingPoints = false;
+                    if (webgazer) {
+                        webgazer.params.storingPoints = false;
+                        debug('停止收集精度测试点');
+                    }
                     var past50 = webgazer.getStoredPoints();
+                    debug(`获取到的存储点数据:`, past50);
+                    
+                    // 修复：检查数据有效性
+                    if (!past50 || past50.length === 0) {
+                        debug('警告: 未获取到有效的存储点数据');
+                        swal('精度测试失败', '未能收集到有效的注视数据，请重新校准。', 'error');
+                        Restart();
+                        return;
+                    }
+                    
                     var precisionPercentage = calculatePrecision(past50);
+                    debug(`计算得出的精度百分比: ${precisionPercentage}%`);
                     
                     document.getElementById('Accuracy').innerHTML = `测试精度: ${precisionPercentage}%`;
                     eyeTrackingData.calibrationData = {
                         points: CalibrationPoints,
                         accuracyPercentage: precisionPercentage,
-                        timestamp: new Date().toISOString()
+                        timestamp: new Date().toISOString(),
+                        testPointsCount: past50.length || (past50[0] ? past50[0].length : 0)
                     };
                     
                     swal({
@@ -1428,12 +1482,10 @@
                         buttons: { cancel: "重新校准", confirm: "接受" }
                     }).then(isConfirm => {
                         document.getElementById('statsPanel').style.display = 'block';
-                        // 恢复显示控制按钮
                         document.querySelector('.controls').style.display = 'block';
                         if (isConfirm) {
                             ClearCanvas();
                             updateStatus('运行中', 'ready');
-                            // 校准完成，重置校准状态
                             isCalibrating = false;
                         } else {
                             document.getElementById("Accuracy").innerHTML = "等待校准...";
@@ -1445,24 +1497,85 @@
             });
         }
         
-        function sleep(time) { return new Promise((resolve) => setTimeout(resolve, time)); }
-        
         function calculatePrecision(past50Array) {
-          var windowHeight = window.innerHeight;
-          var staringPointX = window.innerWidth / 2;
-          var staringPointY = windowHeight / 2;
-          var x50 = past50Array[0];
-          var y50 = past50Array[1];
-          var precisionPercentages = new Array(50);
-          for (let x = 0; x < 50; x++) {
-            var xDiff = staringPointX - x50[x];
-            var yDiff = staringPointY - y50[x];
-            var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
-            var halfWindowHeight = windowHeight / 2;
-            var precision = 100 - (distance / halfWindowHeight * 100);
-            precisionPercentages[x] = Math.max(0, precision);
-          }
-          return Math.round(precisionPercentages.reduce((a, b) => a + b, 0) / 50);
+            debug(`开始计算精度，输入数据:`, past50Array);
+            
+            // 修复：处理不同的数据格式
+            var x50, y50;
+            
+            if (Array.isArray(past50Array) && past50Array.length === 2) {
+                // 格式1: [x数组, y数组]
+                x50 = past50Array[0];
+                y50 = past50Array[1];
+                debug(`使用格式1 - x数组长度: ${x50?.length}, y数组长度: ${y50?.length}`);
+            } else if (Array.isArray(past50Array) && past50Array.length > 0 && past50Array[0].hasOwnProperty('x')) {
+                // 格式2: [{x, y}, {x, y}, ...]
+                x50 = past50Array.map(point => point.x);
+                y50 = past50Array.map(point => point.y);
+                debug(`使用格式2 - 转换后x数组长度: ${x50.length}, y数组长度: ${y50.length}`);
+            } else {
+                debug('错误: 无法识别的数据格式');
+                return 0; // 返回0而不是NaN
+            }
+            
+            // 验证数据有效性
+            if (!x50 || !y50 || x50.length === 0 || y50.length === 0) {
+                debug('错误: x或y数组为空');
+                return 0;
+            }
+            
+            if (x50.length !== y50.length) {
+                debug(`错误: x和y数组长度不匹配 - x: ${x50.length}, y: ${y50.length}`);
+                return 0;
+            }
+            
+            var windowHeight = window.innerHeight;
+            var windowWidth = window.innerWidth;
+            var staringPointX = windowWidth / 2;
+            var staringPointY = windowHeight / 2;
+            
+            debug(`屏幕尺寸: ${windowWidth}x${windowHeight}, 中心点: (${staringPointX}, ${staringPointY})`);
+            
+            var precisionPercentages = [];
+            var validPointsCount = 0;
+            
+            for (let i = 0; i < Math.min(x50.length, y50.length, 50); i++) {
+                var x = x50[i];
+                var y = y50[i];
+                
+                // 检查点是否有效
+                if (typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y)) {
+                    debug(`跳过无效点 ${i}: (${x}, ${y})`);
+                    continue;
+                }
+                
+                var xDiff = staringPointX - x;
+                var yDiff = staringPointY - y;
+                var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
+                
+                // 使用更合理的精度计算方法
+                var maxDistance = Math.sqrt((windowWidth * windowWidth) + (windowHeight * windowHeight)) / 2;
+                var precision = Math.max(0, 100 - (distance / maxDistance * 100));
+                
+                precisionPercentages.push(precision);
+                validPointsCount++;
+                
+                if (i < 5 || i % 10 === 0) { // 只记录前5个点和每10个点的详细信息
+                    debug(`点 ${i}: (${x.toFixed(2)}, ${y.toFixed(2)}), 距离: ${distance.toFixed(2)}, 精度: ${precision.toFixed(2)}%`);
+                }
+            }
+            
+            if (validPointsCount === 0) {
+                debug('错误: 没有有效的测试点');
+                return 0;
+            }
+            
+            var averagePrecision = precisionPercentages.reduce((a, b) => a + b, 0) / precisionPercentages.length;
+            var finalPrecision = Math.round(Math.max(0, Math.min(100, averagePrecision))); // 确保在0-100范围内
+            
+            debug(`精度计算完成 - 有效点数: ${validPointsCount}, 平均精度: ${averagePrecision.toFixed(2)}%, 最终精度: ${finalPrecision}%`);
+            
+            return finalPrecision;
         };
 
         function Restart() {
