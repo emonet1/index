@@ -1445,82 +1445,149 @@
                 closeOnEsc: false, allowOutsideClick: false, closeModal: true
             }).then(() => {
                 updateStatus('精度测试中...', 'calibrating');
-                if (webgazer) {
-                    webgazer.params.storingPoints = true;
-                    debug('开始收集精度测试点，存储5秒钟的注视数据');
+                debug('开始精度测试流程');
+                
+                // 修复：确保WebGazer处于正确状态
+                if (!webgazer || !webgazer.isReady()) {
+                    debug('错误: WebGazer未准备就绪');
+                    swal('精度测试失败', 'WebGazer未准备就绪，请重新校准。', 'error');
+                    Restart();
+                    return;
                 }
-                sleep(5000).then(() => {
-                    if (webgazer) {
-                        webgazer.params.storingPoints = false;
-                        debug('停止收集精度测试点');
-                    }
-                    var past50 = webgazer.getStoredPoints();
-                    debug(`获取到的存储点数据:`, past50);
+                
+                // 修复：清空之前的存储点并开始新的收集
+                try {
+                    webgazer.clearData(); // 清空旧数据
+                    debug('已清空旧的存储点数据');
                     
-                    // 修复：检查数据有效性
-                    if (!past50 || past50.length === 0) {
-                        debug('警告: 未获取到有效的存储点数据');
-                        swal('精度测试失败', '未能收集到有效的注视数据，请重新校准。', 'error');
-                        Restart();
-                        return;
-                    }
-                    
-                    var precisionPercentage = calculatePrecision(past50);
-                    debug(`计算得出的精度百分比: ${precisionPercentage}%`);
-                    
-                    document.getElementById('Accuracy').innerHTML = `测试精度: ${precisionPercentage}%`;
-                    eyeTrackingData.calibrationData = {
-                        points: CalibrationPoints,
-                        accuracyPercentage: precisionPercentage,
-                        timestamp: new Date().toISOString(),
-                        testPointsCount: past50.length || (past50[0] ? past50[0].length : 0)
-                    };
-                    
-                    swal({
-                        title: `您的追踪精度为 ${precisionPercentage}%`,
-                        allowOutsideClick: false,
-                        buttons: { cancel: "重新校准", confirm: "接受" }
-                    }).then(isConfirm => {
-                        document.getElementById('statsPanel').style.display = 'block';
-                        document.querySelector('.controls').style.display = 'block';
-                        if (isConfirm) {
-                            ClearCanvas();
-                            updateStatus('运行中', 'ready');
-                            isCalibrating = false;
-                        } else {
-                            document.getElementById("Accuracy").innerHTML = "等待校准...";
-                            webgazer.clearData();
-                            Restart();
-                        }
-                    });
-                });
+                    // 等待一小段时间再开始收集，确保清空操作完成
+                    setTimeout(() => {
+                        webgazer.params.storingPoints = true;
+                        debug('开始收集精度测试点，存储5秒钟的注视数据');
+                        
+                        sleep(5000).then(() => {
+                            webgazer.params.storingPoints = false;
+                            debug('停止收集精度测试点');
+                            
+                            // 修复：等待一小段时间再获取数据，确保最后的点被存储
+                            setTimeout(() => {
+                                var storedPoints = webgazer.getStoredPoints();
+                                debug('获取到的存储点数据:', storedPoints);
+                                
+                                // 修复：增强数据验证
+                                if (!storedPoints) {
+                                    debug('错误: getStoredPoints() 返回 null 或 undefined');
+                                    handlePrecisionTestFailure();
+                                    return;
+                                }
+                                
+                                var precisionPercentage = calculatePrecision(storedPoints);
+                                debug(`计算得出的精度百分比: ${precisionPercentage}%`);
+                                
+                                if (precisionPercentage === 0 || isNaN(precisionPercentage)) {
+                                    debug('错误: 精度计算结果无效');
+                                    handlePrecisionTestFailure();
+                                    return;
+                                }
+                                
+                                // 成功获取精度
+                                document.getElementById('Accuracy').innerHTML = `测试精度: ${precisionPercentage}%`;
+                                eyeTrackingData.calibrationData = {
+                                    points: CalibrationPoints,
+                                    accuracyPercentage: precisionPercentage,
+                                    timestamp: new Date().toISOString(),
+                                    testPointsCount: Array.isArray(storedPoints) && storedPoints.length === 2 ? 
+                                        (storedPoints[0] ? storedPoints[0].length : 0) : 
+                                        (Array.isArray(storedPoints) ? storedPoints.length : 0),
+                                    dataFormat: Array.isArray(storedPoints) && storedPoints.length === 2 ? 'array_pair' : 'point_array'
+                                };
+                                
+                                swal({
+                                    title: `您的追踪精度为 ${precisionPercentage}%`,
+                                    text: precisionPercentage >= 50 ? '精度良好，可以开始实验。' : '精度较低，建议重新校准以获得更好的追踪效果。',
+                                    allowOutsideClick: false,
+                                    buttons: { cancel: "重新校准", confirm: "接受" }
+                                }).then(isConfirm => {
+                                    document.getElementById('statsPanel').style.display = 'block';
+                                    document.querySelector('.controls').style.display = 'block';
+                                    if (isConfirm) {
+                                        ClearCanvas();
+                                        updateStatus('运行中', 'ready');
+                                        isCalibrating = false;
+                                        debug(`校准完成，精度: ${precisionPercentage}%`);
+                                    } else {
+                                        document.getElementById("Accuracy").innerHTML = "等待校准...";
+                                        Restart();
+                                    }
+                                });
+                                
+                            }, 200); // 等待200ms再获取数据
+                        });
+                    }, 100); // 等待100ms再开始收集
+                } catch (error) {
+                    debug(`精度测试过程中出错: ${error.message}`);
+                    handlePrecisionTestFailure();
+                }
+            });
+        }
+        
+        // 新增：处理精度测试失败的统一函数
+        function handlePrecisionTestFailure() {
+            debug('精度测试失败，准备重新校准');
+            document.getElementById('Accuracy').innerHTML = `测试精度: 测试失败`;
+            swal('精度测试失败', '未能收集到有效的注视数据或计算出现问题。\n\n建议检查以下项目：\n• 确保人脸在摄像头视野内\n• 确保光线充足\n• 重新进行校准\n\n是否重新校准？', 'error').then(() => {
+                Restart();
             });
         }
         
         function calculatePrecision(past50Array) {
-            debug(`开始计算精度，输入数据:`, past50Array);
+            debug(`开始计算精度，输入数据类型: ${typeof past50Array}, 长度: ${Array.isArray(past50Array) ? past50Array.length : 'N/A'}`);
+            debug('详细数据内容:', past50Array);
             
-            // 修复：处理不同的数据格式
+            // 修复：更全面的数据格式处理
             var x50, y50;
             
-            if (Array.isArray(past50Array) && past50Array.length === 2) {
-                // 格式1: [x数组, y数组]
-                x50 = past50Array[0];
-                y50 = past50Array[1];
-                debug(`使用格式1 - x数组长度: ${x50?.length}, y数组长度: ${y50?.length}`);
-            } else if (Array.isArray(past50Array) && past50Array.length > 0 && past50Array[0].hasOwnProperty('x')) {
-                // 格式2: [{x, y}, {x, y}, ...]
-                x50 = past50Array.map(point => point.x);
-                y50 = past50Array.map(point => point.y);
-                debug(`使用格式2 - 转换后x数组长度: ${x50.length}, y数组长度: ${y50.length}`);
-            } else {
-                debug('错误: 无法识别的数据格式');
-                return 0; // 返回0而不是NaN
+            try {
+                if (Array.isArray(past50Array)) {
+                    if (past50Array.length === 2) {
+                        // 格式1: [x数组, y数组]
+                        x50 = past50Array[0];
+                        y50 = past50Array[1];
+                        debug(`使用格式1 [x数组, y数组] - x数组长度: ${Array.isArray(x50) ? x50.length : 'N/A'}, y数组长度: ${Array.isArray(y50) ? y50.length : 'N/A'}`);
+                        
+                        // 验证x50和y50都是数组
+                        if (!Array.isArray(x50) || !Array.isArray(y50)) {
+                            debug('错误: x50或y50不是数组');
+                            return 0;
+                        }
+                    } else if (past50Array.length > 0 && typeof past50Array[0] === 'object' && past50Array[0] !== null) {
+                        // 格式2: [{x, y}, {x, y}, ...]
+                        x50 = [];
+                        y50 = [];
+                        for (let i = 0; i < past50Array.length; i++) {
+                            const point = past50Array[i];
+                            if (point && typeof point.x === 'number' && typeof point.y === 'number') {
+                                x50.push(point.x);
+                                y50.push(point.y);
+                            }
+                        }
+                        debug(`使用格式2 [点对象数组] - 转换后x数组长度: ${x50.length}, y数组长度: ${y50.length}`);
+                    } else {
+                        debug('错误: 无法识别的数组格式');
+                        return 0;
+                    }
+                } else {
+                    debug('错误: 输入不是数组');
+                    return 0;
+                }
+            } catch (error) {
+                debug(`数据格式解析出错: ${error.message}`);
+                return 0;
             }
             
-            // 验证数据有效性
-            if (!x50 || !y50 || x50.length === 0 || y50.length === 0) {
-                debug('错误: x或y数组为空');
+            // 验证最终数据有效性
+            if (!Array.isArray(x50) || !Array.isArray(y50) || x50.length === 0 || y50.length === 0) {
+                debug(`错误: 最终数据无效 - x50: ${x50}, y50: ${y50}`);
                 return 0;
             }
             
@@ -1535,17 +1602,19 @@
             var staringPointY = windowHeight / 2;
             
             debug(`屏幕尺寸: ${windowWidth}x${windowHeight}, 中心点: (${staringPointX}, ${staringPointY})`);
+            debug(`将处理 ${Math.min(x50.length, y50.length)} 个数据点`);
             
             var precisionPercentages = [];
             var validPointsCount = 0;
+            var totalDistance = 0;
             
-            for (let i = 0; i < Math.min(x50.length, y50.length, 50); i++) {
+            for (let i = 0; i < Math.min(x50.length, y50.length); i++) {
                 var x = x50[i];
                 var y = y50[i];
                 
                 // 检查点是否有效
                 if (typeof x !== 'number' || typeof y !== 'number' || isNaN(x) || isNaN(y)) {
-                    debug(`跳过无效点 ${i}: (${x}, ${y})`);
+                    if (i < 10) debug(`跳过无效点 ${i}: (${x}, ${y})`);
                     continue;
                 }
                 
@@ -1553,15 +1622,16 @@
                 var yDiff = staringPointY - y;
                 var distance = Math.sqrt((xDiff * xDiff) + (yDiff * yDiff));
                 
-                // 使用更合理的精度计算方法
+                // 使用更合理的精度计算方法 - 基于屏幕对角线的一半作为最大距离
                 var maxDistance = Math.sqrt((windowWidth * windowWidth) + (windowHeight * windowHeight)) / 2;
                 var precision = Math.max(0, 100 - (distance / maxDistance * 100));
                 
                 precisionPercentages.push(precision);
+                totalDistance += distance;
                 validPointsCount++;
                 
-                if (i < 5 || i % 10 === 0) { // 只记录前5个点和每10个点的详细信息
-                    debug(`点 ${i}: (${x.toFixed(2)}, ${y.toFixed(2)}), 距离: ${distance.toFixed(2)}, 精度: ${precision.toFixed(2)}%`);
+                if (i < 10) { // 记录前10个点的详细信息
+                    debug(`点 ${i}: (${x.toFixed(1)}, ${y.toFixed(1)}), 距中心距离: ${distance.toFixed(1)}px, 精度: ${precision.toFixed(1)}%`);
                 }
             }
             
@@ -1571,167 +1641,100 @@
             }
             
             var averagePrecision = precisionPercentages.reduce((a, b) => a + b, 0) / precisionPercentages.length;
+            var averageDistance = totalDistance / validPointsCount;
             var finalPrecision = Math.round(Math.max(0, Math.min(100, averagePrecision))); // 确保在0-100范围内
             
-            debug(`精度计算完成 - 有效点数: ${validPointsCount}, 平均精度: ${averagePrecision.toFixed(2)}%, 最终精度: ${finalPrecision}%`);
+            debug(`精度计算完成:`);
+            debug(`- 有效点数: ${validPointsCount}/${Math.min(x50.length, y50.length)}`);
+            debug(`- 平均距离: ${averageDistance.toFixed(1)}px`);
+            debug(`- 平均精度: ${averagePrecision.toFixed(2)}%`);
+            debug(`- 最终精度: ${finalPrecision}%`);
             
             return finalPrecision;
-        };
-
-        function Restart() {
-            if (!webgazerReady) return;
-            document.getElementById('Accuracy').innerHTML = "等待校准...";
-            if(webgazer) webgazer.clearData();
-            ClearCalibration();
-            ClearCanvas();
-            updateStatus('准备重新校准', 'ready');
-            // 确保重新校准时也隐藏控制按钮
-            document.querySelector('.controls').style.display = 'none';
-            PopUpInstruction();
-        }
-
-        function ClearCalibration() {
-            document.querySelectorAll('.Calibration').forEach((i) => {
-                i.style.backgroundColor = 'red';
-                i.style.opacity = '0.2';
-                i.removeAttribute('disabled');
-            });
-            CalibrationPoints = {};
-            PointCalibrate = 0;
-        }
-
-        // =======================================================================
-        // 系统控制与生命周期
-        // =======================================================================
-
-        function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
-        
-        function toggleHeatmap() { 
-            const heatmapContainer = document.getElementById('heatmapContainer');
-            heatmapContainer.classList.toggle('heatmap-visible');
-            heatmapContainer.style.visibility = heatmapContainer.classList.contains('heatmap-visible') ? 'visible' : 'hidden';
         }
         
-        function startStatsUpdate() {
-            if (statsUpdateInterval) clearInterval(statsUpdateInterval);
-            statsUpdateInterval = setInterval(() => { if (isTracking) { document.getElementById('runningTime').textContent = Math.round((Date.now() - startTime) / 1000) + 's'; updateStatsDisplay(); } }, 1000);
-        }
-        function stopStatsUpdate() { if (statsUpdateInterval) clearInterval(statsUpdateInterval); }
-        
-        function exportData() {
-            if (gazeCount === 0) return swal('无数据', '沒有可导出的数据。', 'warning');
-            const dataStr = JSON.stringify({ sessionInfo: { sessionId, userId, studentId, studentName }, collectedData: eyeTrackingData }, null, 2);
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(new Blob([dataStr], {type: 'application/json'}));
-            link.download = `eye-tracking-data-${sessionId}.json`;
-            link.click();
-            URL.revokeObjectURL(link.href);
+        function sleep(time) { 
+            return new Promise((resolve) => {
+                debug(`等待 ${time}ms...`);
+                setTimeout(resolve, time);
+            }); 
         }
 
-        async function initializeSystem() {
-            // 新增：用户信息提交逻辑
-            document.getElementById('submitUserInfoBtn').addEventListener('click', async () => {
-                studentId = document.getElementById('studentId').value.trim();
-                studentName = document.getElementById('studentName').value.trim();
-                
-                if (!studentId || !studentName) {
-                    swal('错误', '学号和姓名不能为空！', 'error');
-                    return;
-                }
-                
-                // 更新统计面板和覆盖层
-                document.getElementById('studentIdDisplay').textContent = studentId;
-                document.getElementById('studentNameDisplay').textContent = studentName;
-                document.getElementById('overlayUserId').textContent = `${studentName} (${studentId})`;
-
-                // 隐藏表单，显示实验界面
-                const userInfoContainer = document.getElementById('userInfoContainer');
-                userInfoContainer.style.opacity = '0';
-                setTimeout(() => { userInfoContainer.style.display = 'none'; }, 500);
-                
-                document.getElementById('content').style.display = 'block';
-                document.getElementById('statsPanel').style.display = 'block';
-                
-                debug(`用户信息已提交 - 学号: ${studentId}, 姓名: ${studentName}`);
-                
-                // 初始化完成后自动测试Firebase连接
-                await testFirebaseConnection();
-            });
-
-            try {
-                if (typeof h337 === 'undefined' || typeof swal === 'undefined') throw new Error('依赖库加载失败');
-                if (!await loadWebGazerScript() || typeof webgazer === 'undefined') throw new Error('WebGazer加载失败');
-                heatmapInstance = h337.create({ container: document.getElementById('heatmapContainer'), radius: 25, maxOpacity: 0.6, minOpacity: 0.1, blur: 0.8 });
-                // 修改：不在初始化时测试连接，改为提交用户信息后测试
-                // await testFirebaseConnection(); 
-                updateStatus('等待用户信息', 'initializing');
-                document.getElementById('startBtn').disabled = false;
-                librariesLoaded = true;
-                ClearCanvas();
-                setupVideoPlayer();
-            } catch (error) {
-                updateStatus('初始化失败', 'error');
-                swal('严重错误', `系统初始化失败:\n\n${error.message}`, 'error');
-            }
-        }
-
+        // 修复：改进WebGazer启动流程
         async function startEyeTracking() {
             if (!librariesLoaded) return;
             const startBtn = document.getElementById('startBtn');
             startBtn.disabled = true;
             updateStatus('初始化WebGazer...', 'initializing');
+            
             try {
-                await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
-                webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
-                isTracking = true; startTime = Date.now(); webgazerReady = true;
+                debug('开始初始化WebGazer...');
+                
+                // 修复：确保WebGazer完全初始化
+                await webgazer
+                    .setRegression('ridge')
+                    .setTracker('clmtrackr')
+                    .setGazeListener(gazeDataCallback)
+                    .begin();
+                
+                debug('WebGazer基本初始化完成');
+                
+                // 设置WebGazer参数
+                webgazer.showVideoPreview(true);
+                webgazer.showPredictionPoints(true);
+                webgazer.applyKalmanFilter(true);
+                
+                // 修复：确保storingPoints初始状态为false
+                if (webgazer.params) {
+                    webgazer.params.storingPoints = false;
+                    debug('WebGazer storingPoints 初始化为 false');
+                }
+                
+                // 等待WebGazer完全准备就绪
+                let readyCheckCount = 0;
+                const maxReadyChecks = 50; // 最多等待5秒
+                
+                while (!webgazer.isReady() && readyCheckCount < maxReadyChecks) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    readyCheckCount++;
+                    if (readyCheckCount % 10 === 0) {
+                        debug(`等待WebGazer准备就绪... ${readyCheckCount}/${maxReadyChecks}`);
+                    }
+                }
+                
+                if (!webgazer.isReady()) {
+                    throw new Error('WebGazer在5秒内未能准备就绪');
+                }
+                
+                debug('WebGazer已完全准备就绪');
+                
+                isTracking = true; 
+                startTime = Date.now(); 
+                webgazerReady = true;
+                
                 if (firebaseConnected) startAutoSave();
-                startHeatmapSnapshots(); startStatsUpdate();
+                startHeatmapSnapshots(); 
+                startStatsUpdate();
+                
                 updateStatus('运行中', 'ready');
                 document.getElementById('calibrateBtn').disabled = false;
                 startBtn.textContent = '✅ 运行中';
-                swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
+                
+                debug('眼动追踪系统启动成功');
+                swal('启动成功', '眼动追踪已启动！\n\n强烈建议您点击"开始校准"以提高精度。\n\n校准完成后才能获得准确的精度测试结果。', 'success');
+                
             } catch (error) {
                 console.error("启动眼动追踪失败:", error);
+                debug(`眼动追踪启动失败: ${error.message}`);
                 updateStatus('启动失败', 'error');
                 startBtn.disabled = false;
-                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
+                webgazerReady = false;
+                isTracking = false;
+                swal('启动失败', `无法启动眼动追踪系统。\n\n请检查：\n• 摄像头权限是否已授予\n• 摄像头是否正常工作\n• 网络连接是否正常\n\n错误详情：${error.message}`, 'error');
             }
         }
 
-        async function performStop() {
-            if (firebaseConnected) await saveEyeTrackingData(true);
-            isTracking = false;
-            stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
-            if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
-                webgazer.end();
-                debug("WebGazer.end() 已调用，停止追踪。");
-            }
-            ClearCalibration();
-            ClearCanvas();
-            
-            // 新增：保留热力图累积数据，只重置显示
-            debug(`停止时保留 ${allTimeGazePoints.length} 个累积热力图数据点`);
-            
-            updateStatus('已停止', 'error');
-            document.getElementById('startBtn').disabled = false;
-            document.getElementById('startBtn').textContent = '🚀 启动眼动追踪';
-            document.getElementById('calibrateBtn').disabled = true;
-        }
-
-        window.addEventListener('load', initializeSystem);
-        window.addEventListener('error', (e) => debug(`全局错误: ${e.message}`));
-        window.addEventListener('unhandledrejection', (e) => debug(`Promise拒绝: ${e.reason}`));
-        window.addEventListener('beforeunload', (e) => {
-            if (isTracking && eyeTrackingData.gazePoints.length > 0) {
-                const message = '您有未保存的数据，确定要离开吗？';
-                e.returnValue = message; return message;
-            }
-        });
-        document.addEventListener('visibilitychange', () => {
-            if (isTracking && webgazer) {
-                document.visibilityState === 'hidden' ? webgazer.pause() : webgazer.resume();
-            }
-        });
+        // ...existing code...
     </script>
 </body>
 </html>
