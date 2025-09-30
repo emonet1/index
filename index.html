@@ -184,62 +184,48 @@
         /* 新增：眼部距离测量面板样式 */
         #distancePanel {
             position: fixed;
-            top: 20px;
-            left: 250px;
+            top: 50%;
+            left: 10px;
+            transform: translateY(-50%);
             background: rgba(0, 100, 200, 0.9);
             color: white;
             padding: 15px;
             border-radius: 10px;
-            z-index: 2000;
-            width: 220px;
+            z-index: 1500; /* 降低z-index避免遮挡其他重要元素 */
+            width: 200px;
             font-size: 12px;
             border: 2px solid #0066CC;
+            transition: all 0.3s ease; /* 添加过渡动画 */
         }
         
-        .distance-item {
-            margin: 8px 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        /* 新增：隐藏状态样式 */
+        #distancePanel.hidden {
+            left: -215px; /* 完全移出屏幕 */
+            opacity: 0.8;
         }
         
-        .distance-value {
-            font-weight: bold;
-            color: #00FF88;
-            font-size: 11px;
-        }
-        
-        .distance-status {
-            padding: 5px 8px;
-            border-radius: 4px;
-            text-align: center;
-            font-size: 10px;
-            margin: 5px 0;
-        }
-        
-        .distance-status.good {
-            background: #4CAF50;
+        /* 新增：显示切换按钮样式 */
+        #distancePanelToggle {
+            position: fixed;
+            top: 50%;
+            left: 5px;
+            transform: translateY(-50%);
+            background: rgba(0, 100, 200, 0.9);
             color: white;
+            border: none;
+            padding: 8px 4px;
+            border-radius: 0 8px 8px 0;
+            z-index: 1600;
+            font-size: 12px;
+            cursor: pointer;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transition: all 0.3s ease;
         }
         
-        .distance-status.warning {
-            background: #FF9800;
-            color: white;
-        }
-        
-        .distance-status.poor {
-            background: #F44336;
-            color: white;
-        }
-        
-        .distance-calibration {
-            background: rgba(255, 255, 0, 0.3);
-            border: 2px solid #FFD700;
-            padding: 8px;
-            border-radius: 6px;
-            margin: 5px 0;
-            text-align: center;
-            font-size: 10px;
+        #distancePanelToggle:hover {
+            background: rgba(0, 120, 240, 1);
+            padding-left: 8px;
         }
     </style>
 </head>
@@ -318,7 +304,7 @@
 
     </div>
 
-    <!-- 新增：眼部距离测量面板 -->
+    <!-- 修改：眼部距离测量面板位置和结构 -->
     <div id="distancePanel">
         <h4 style="margin: 0 0 8px 0; text-align: center; color: #00FF88; font-size: 13px;">👁️ 眼部距离测量</h4>
         <div class="distance-item"><span>当前距离:</span><span id="currentDistance" class="distance-value">--cm</span></div>
@@ -333,8 +319,12 @@
             <button class="btn test" onclick="calibrateDistance()" style="width: 100%; padding: 4px; font-size: 10px;">📏 校准参考距离</button>
         </div>
         <button class="btn test" onclick="resetDistanceData()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🔄 重置数据</button>
-        <button class="btn test" onclick="toggleDistancePanel()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">👁️ 显示/隐藏</button>
     </div>
+
+    <!-- 新增：距离面板切换按钮 -->
+    <button id="distancePanelToggle" onclick="toggleDistancePanel()" title="显示/隐藏距离测量面板">
+        👁️距离
+    </button>
 
     <script>
         // ===========================================
