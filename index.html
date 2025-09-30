@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪数据收集系统 - 视频观看版</title>
+    <title>眼动追踪数据收集系统 - 视频观看版（含眼部距离测量）</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -180,6 +180,67 @@
             border-radius: 4px;
             border: 1px solid #ccc;
         }
+        
+        /* 新增：眼部距离测量面板样式 */
+        #distancePanel {
+            position: fixed;
+            top: 20px;
+            left: 250px;
+            background: rgba(0, 100, 200, 0.9);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            z-index: 2000;
+            width: 220px;
+            font-size: 12px;
+            border: 2px solid #0066CC;
+        }
+        
+        .distance-item {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .distance-value {
+            font-weight: bold;
+            color: #00FF88;
+            font-size: 11px;
+        }
+        
+        .distance-status {
+            padding: 5px 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 10px;
+            margin: 5px 0;
+        }
+        
+        .distance-status.good {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .distance-status.warning {
+            background: #FF9800;
+            color: white;
+        }
+        
+        .distance-status.poor {
+            background: #F44336;
+            color: white;
+        }
+        
+        .distance-calibration {
+            background: rgba(255, 255, 0, 0.3);
+            border: 2px solid #FFD700;
+            padding: 8px;
+            border-radius: 6px;
+            margin: 5px 0;
+            text-align: center;
+            font-size: 10px;
+        }
     </style>
 </head>
 <body>
@@ -255,6 +316,24 @@
             </div>
         </div>
 
+    </div>
+
+    <!-- 新增：眼部距离测量面板 -->
+    <div id="distancePanel">
+        <h4 style="margin: 0 0 8px 0; text-align: center; color: #00FF88; font-size: 13px;">👁️ 眼部距离测量</h4>
+        <div class="distance-item"><span>当前距离:</span><span id="currentDistance" class="distance-value">--cm</span></div>
+        <div class="distance-item"><span>平均距离:</span><span id="averageDistance" class="distance-value">--cm</span></div>
+        <div class="distance-item"><span>最小距离:</span><span id="minDistance" class="distance-value">--cm</span></div>
+        <div class="distance-item"><span>最大距离:</span><span id="maxDistance" class="distance-value">--cm</span></div>
+        <div class="distance-item"><span>标准差:</span><span id="distanceStdDev" class="distance-value">--cm</span></div>
+        <div class="distance-item"><span>测量次数:</span><span id="measurementCount" class="distance-value">0</span></div>
+        <div class="distance-status good" id="distanceStatus">📏 距离: 理想</div>
+        <div class="distance-calibration" id="distanceCalibration">
+            <div style="font-weight: bold; margin-bottom: 4px;">📐 距离校准</div>
+            <button class="btn test" onclick="calibrateDistance()" style="width: 100%; padding: 4px; font-size: 10px;">📏 校准参考距离</button>
+        </div>
+        <button class="btn test" onclick="resetDistanceData()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🔄 重置数据</button>
+        <button class="btn test" onclick="toggleDistancePanel()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">👁️ 显示/隐藏</button>
     </div>
 
     <script>
@@ -1029,6 +1108,7 @@
                     `用户ID: ${userId}`,
                     `视频时间: ${currentVideoTime.toFixed(4)}s`,
                     `注视点数: ${allTimeGazePoints.length}`,
+                    `眼部距离: ${currentDistance ? currentDistance + 'cm' : '未测量'}`, // 新增距离信息
                     `会话ID: ${sessionId.substring(0, 15)}...`
                 ];
                 
@@ -1443,6 +1523,7 @@
         function Restart() {
             if (!webgazerReady) return;
             document.getElementById('Accuracy').innerHTML = "等待校准...";
+           
             if(webgazer) webgazer.clearData();
             ClearCalibration();
             ClearCanvas();
@@ -1514,9 +1595,11 @@
             try {
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
+                
                 isTracking = true; startTime = Date.now(); webgazerReady = true;
                 if (firebaseConnected) startAutoSave();
                 startHeatmapSnapshots(); startStatsUpdate();
+                startDistanceMeasurement(); // 启动距离测量
                 updateStatus('运行中', 'ready');
                 document.getElementById('calibrateBtn').disabled = false;
                 startBtn.textContent = '✅ 运行中';
@@ -1533,6 +1616,7 @@
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
             stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
+            stopDistanceMeasurement(); // 停止距离测量
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
                 debug("WebGazer.end() 已调用，停止追踪。");
