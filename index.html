@@ -385,6 +385,14 @@
         let studentId = null;
         let studentName = null;
         
+        // 新增：距离测量相关变量
+        let distanceMeasurements = [];
+        let calibratedFaceWidth = null;
+        let realFaceWidth = 14;
+        let isDistanceCalibrated = false;
+        let distanceUpdateInterval = null;
+        let isDistancePanelVisible = true;
+        
         var PointCalibrate = 0;
         var CalibrationPoints = {};
         
@@ -404,77 +412,292 @@
         document.getElementById('overlayUserId').textContent = userId;
         
         // ===========================================
-        // 新增：收集学生信息的功能
+        // 新增：眼部距离测量功能实现
         // ===========================================
-        async function collectStudentInfo() {
-            const contentDiv = document.createElement('div');
-            contentDiv.innerHTML = `
-                <p style="text-align: left; font-weight: bold;">请输入您的学号和姓名开始实验:</p>
-                <input id="swal-student-id" class="swal-content__input" placeholder="学号 (Student ID)">
-                <input id="swal-student-name" class="swal-content__input" placeholder="姓名 (Name)">
-            `;
-
-            swal({
-                title: "身份信息",
-                content: contentDiv,
-                buttons: {
-                    confirm: {
-                        text: "提交",
-                        value: true,
-                        visible: true,
-                        className: "",
-                        closeModal: false,
-                    },
-                },
-                closeOnClickOutside: false,
-                closeOnEsc: false,
-            }).then(async () => {
-                const idInput = document.getElementById('swal-student-id').value.trim();
-                const nameInput = document.getElementById('swal-student-name').value.trim();
-
-                if (!idInput || !nameInput) {
-                    swal("错误!", "学号和姓名不能为空!", "error");
-                    // 延迟后重新弹出对话框
-                    setTimeout(collectStudentInfo, 1500);
-                    return;
+        
+        // 距离测量算法：基于人脸宽度估算距离
+        function calculateEyeToScreenDistance() {
+            if (!webgazer || !webgazer.isReady() || !isTracking) {
+                return null;
+            }
+            
+            try {
+                const tracker = webgazer.getTracker();
+                if (!tracker || !tracker.getCurrentPosition) {
+                    return null;
                 }
-
-                studentId = idInput;
-                studentName = nameInput;
-
-                // 更新UI显示
-                document.getElementById('studentIdDisplay').textContent = studentId;
-                document.getElementById('studentNameDisplay').textContent = studentName;
-
-                // 关闭当前弹窗
-                swal.stopLoading();
-                swal.close();
-
-                // 立即保存学生信息到Firebase
-                await saveStudentInfoToFirebase();
-
-                // 继续原有的系统初始化流程
-                await initializeSystem();
+                
+                const faceModel = tracker.getCurrentPosition();
+                if (!faceModel || faceModel.length === 0) {
+                    return null;
+                }
+                
+                // CLMTrackr模型特定点位：
+                // 点0和16是面部轮廓的左右边界点
+                // 点36是左眼外角，点45是右眼外角
+                const leftFace = faceModel[0];
+                const rightFace = faceModel[16];
+                const leftEyeOuter = faceModel[36];
+                const rightEyeOuter = faceModel[45];
+                
+                if (!leftFace || !rightFace || !leftEyeOuter || !rightEyeOuter) {
+                    return null;
+                }
+                
+                // 计算人脸宽度（像素）
+                const faceWidthPixels = Math.abs(rightFace.x - leftFace.x);
+                
+                // 计算眼距（像素）- 更精确的测量点
+                const eyeDistancePixels = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+                
+                if (gazeCount % 50 === 0) {
+                    debug(`人脸宽度: ${faceWidthPixels.toFixed(2)}px, 眼距: ${eyeDistancePixels.toFixed(2)}px`);
+                }
+                
+                // 使用人脸宽度计算距离
+                if (faceWidthPixels > 0) {
+                    let distance;
+                    if (isDistanceCalibrated && calibratedFaceWidth) {
+                        // 使用校准后的参考值
+                        distance = (calibratedFaceWidth * 50) / faceWidthPixels;
+                    } else {
+                        // 使用默认算法：焦距 * 真实人脸宽度 / 像素人脸宽度
+                        const focalLength = 600;
+                        distance = (focalLength * realFaceWidth) / faceWidthPixels;
+                    }
+                    
+                    // 合理性检查
+                    if (distance > 10 && distance < 200) {
+                        return Math.round(distance * 10) / 10;
+                    }
+                }
+                
+                return null;
+            } catch (error) {
+                debug(`距离计算错误: ${error.message}`);
+                return null;
+            }
+        }
+        
+        // 更新距离显示
+        function updateDistanceDisplay() {
+            const currentDistance = calculateEyeToScreenDistance();
+            
+            if (currentDistance !== null) {
+                // 添加到测量数据
+                distanceMeasurements.push({
+                    distance: currentDistance,
+                    timestamp: new Date().toISOString(),
+                    sessionId,
+                    userId,
+                    studentId,
+                    studentName,
+                    videoTimestamp: getVideoTimestamp(),
+                    isVideoActive: isVideoExperimentActive
+                });
+                
+                // 保持最近1000个测量值
+                if (distanceMeasurements.length > 1000) {
+                    distanceMeasurements = distanceMeasurements.slice(-1000);
+                }
+                
+                // 计算统计数据
+                const distances = distanceMeasurements.map(m => m.distance);
+                const avgDistance = distances.reduce((a, b) => a + b, 0) / distances.length;
+                const minDistance = Math.min(...distances);
+                const maxDistance = Math.max(...distances);
+                
+                // 计算标准差
+                const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDistance, 2), 0) / distances.length;
+                const stdDev = Math.sqrt(variance);
+                
+                // 更新显示
+                document.getElementById('currentDistance').textContent = `${currentDistance}cm`;
+                document.getElementById('averageDistance').textContent = `${avgDistance.toFixed(1)}cm`;
+                document.getElementById('minDistance').textContent = `${minDistance.toFixed(1)}cm`;
+                document.getElementById('maxDistance').textContent = `${maxDistance.toFixed(1)}cm`;
+                document.getElementById('distanceStdDev').textContent = `${stdDev.toFixed(1)}cm`;
+                document.getElementById('measurementCount').textContent = distances.length;
+                
+                // 更新距离状态
+                updateDistanceStatus(currentDistance);
+                
+                // 每50次测量记录一次调试信息
+                if (distances.length % 50 === 0) {
+                    debug(`距离测量 #${distances.length}: 当前=${currentDistance}cm, 平均=${avgDistance.toFixed(1)}cm, 标准差=${stdDev.toFixed(1)}cm`);
+                }
+            } else {
+                document.getElementById('currentDistance').textContent = '--cm';
+                updateDistanceStatus(null);
+            }
+        }
+        
+        // 更新距离状态指示器
+        function updateDistanceStatus(distance) {
+            const statusEl = document.getElementById('distanceStatus');
+            
+            if (distance === null) {
+                statusEl.textContent = '📏 距离: 未检测到';
+                statusEl.className = 'distance-status poor';
+                return;
+            }
+            
+            if (distance >= 40 && distance <= 80) {
+                statusEl.textContent = `📏 距离: 理想 (${distance}cm)`;
+                statusEl.className = 'distance-status good';
+            } else if (distance >= 30 && distance <= 100) {
+                statusEl.textContent = `📏 距离: 可接受 (${distance}cm)`;
+                statusEl.className = 'distance-status warning';
+            } else {
+                statusEl.textContent = `📏 距离: 不理想 (${distance}cm)`;
+                statusEl.className = 'distance-status poor';
+            }
+        }
+        
+        // 获取当前视频时间戳
+        function getVideoTimestamp() {
+            const videoPlayer = document.getElementById('eyeTrackingVideoPlayer');
+            if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
+                return parseFloat(videoPlayer.currentTime.toFixed(4));
+            }
+            return null;
+        }
+        
+        // 开始距离测量定时器
+        function startDistanceMeasurement() {
+            if (distanceUpdateInterval) clearInterval(distanceUpdateInterval);
+            distanceUpdateInterval = setInterval(updateDistanceDisplay, 500);
+            debug('距离测量定时器已启动，每500ms更新一次');
+        }
+        
+        // 停止距离测量定时器
+        function stopDistanceMeasurement() {
+            if (distanceUpdateInterval) {
+                clearInterval(distanceUpdateInterval);
+                distanceUpdateInterval = null;
+                debug('距离测量定时器已停止');
+            }
+        }
+        
+        // 校准距离功能
+        async function calibrateDistance() {
+            if (!webgazer || !webgazer.isReady()) {
+                swal('错误', '请先启动眼动追踪系统！', 'error');
+                return;
+            }
+            
+            swal({
+                title: "距离校准",
+                text: "请您坐在距离屏幕50厘米的位置，保持头部稳定，然后点击确定开始校准。",
+                icon: "info",
+                buttons: {
+                    cancel: "取消",
+                    confirm: "开始校准"
+                }
+            }).then(async (willCalibrate) => {
+                if (willCalibrate) {
+                    debug('开始距离校准...');
+                    
+                    // 收集5秒的人脸宽度数据
+                    const calibrationData = [];
+                    const calibrationDuration = 5000;
+                    const sampleInterval = 200;
+                    
+                    swal({
+                        title: "正在校准...",
+                        text: "请保持50cm距离不动，正在采集数据...",
+                        buttons: false,
+                        closeOnClickOutside: false,
+                        closeOnEsc: false
+                    });
+                    
+                    const calibrationTimer = setInterval(() => {
+                        try {
+                            const tracker = webgazer.getTracker();
+                            if (tracker && tracker.getCurrentPosition) {
+                                const faceModel = tracker.getCurrentPosition();
+                                if (faceModel && faceModel.length > 16) {
+                                    const leftFace = faceModel[0];
+                                    const rightFace = faceModel[16];
+                                    if (leftFace && rightFace) {
+                                        const faceWidth = Math.abs(rightFace.x - leftFace.x);
+                                        if (faceWidth > 0) {
+                                            calibrationData.push(faceWidth);
+                                            debug(`校准采样: ${faceWidth.toFixed(2)}px`);
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (error) {
+                            debug(`校准采样错误: ${error.message}`);
+                        }
+                    }, sampleInterval);
+                    
+                    setTimeout(() => {
+                        clearInterval(calibrationTimer);
+                        
+                        if (calibrationData.length >= 5) {
+                            // 计算平均人脸宽度
+                            const avgFaceWidth = calibrationData.reduce((a, b) => a + b, 0) / calibrationData.length;
+                            calibratedFaceWidth = avgFaceWidth;
+                            isDistanceCalibrated = true;
+                            
+                            debug(`距离校准完成: 平均人脸宽度 = ${avgFaceWidth.toFixed(2)}px (样本数: ${calibrationData.length})`);
+                            
+                            swal('校准成功！', `已完成距离校准\n参考人脸宽度: ${avgFaceWidth.toFixed(2)}px\n样本数量: ${calibrationData.length}`, 'success');
+                            
+                            // 保存校准信息
+                            if (!eyeTrackingData.distanceCalibration) {
+                                eyeTrackingData.distanceCalibration = {};
+                            }
+                            eyeTrackingData.distanceCalibration = {
+                                calibratedFaceWidth: calibratedFaceWidth,
+                                sampleCount: calibrationData.length,
+                                timestamp: new Date().toISOString(),
+                                referenceDistance: 50
+                            };
+                        } else {
+                            swal('校准失败', `采集数据不足 (${calibrationData.length}/5)，请确保人脸清晰可见`, 'error');
+                        }
+                    }, calibrationDuration);
+                }
             });
         }
         
-        async function saveStudentInfoToFirebase() {
-            debug(`正在保存学生信息: ${studentId} - ${studentName}`);
-            try {
-                await db.collection("student_info_video_v1").add({
-                    studentId,
-                    studentName,
-                    userId,
-                    sessionId,
-                    timestamp: new Date().toISOString(),
-                    experimentType: 'video_eye_tracking'
-                });
-                debug('学生信息成功保存到Firebase。');
-                swal('信息已记录', `学号: ${studentId}\n姓名: ${studentName}`, 'success', { timer: 2000 });
-            } catch (error) {
-                console.error("保存学生信息失败: ", error);
-                debug(`保存学生信息失败: ${error.message}`);
-                swal('保存失败', '无法记录您的信息，请检查网络连接并刷新页面。', 'error');
+        // 重置距离数据
+        function resetDistanceData() {
+            distanceMeasurements = [];
+            document.getElementById('currentDistance').textContent = '--cm';
+            document.getElementById('averageDistance').textContent = '--cm';
+            document.getElementById('minDistance').textContent = '--cm';
+            document.getElementById('maxDistance').textContent = '--cm';
+            document.getElementById('distanceStdDev').textContent = '--cm';
+            document.getElementById('measurementCount').textContent = '0';
+            document.getElementById('distanceStatus').textContent = '📏 距离: 理想';
+            document.getElementById('distanceStatus').className = 'distance-status good';
+            debug('距离测量数据已重置');
+            swal('重置完成', '距离测量数据已清除', 'info');
+        }
+        
+        // 切换距离面板显示/隐藏功能
+        function toggleDistancePanel() {
+            const panel = document.getElementById('distancePanel');
+            const toggleBtn = document.getElementById('distancePanelToggle');
+            
+            if (isDistancePanelVisible) {
+                // 隐藏面板
+                panel.classList.add('hidden');
+                toggleBtn.textContent = '👁️显示';
+                toggleBtn.title = '显示距离测量面板';
+                isDistancePanelVisible = false;
+                debug('距离测量面板已隐藏');
+            } else {
+                // 显示面板
+                panel.classList.remove('hidden');
+                toggleBtn.textContent = '👁️距离';
+                toggleBtn.title = '隐藏距离测量面板';
+                isDistancePanelVisible = true;
+                debug('距离测量面板已显示');
             }
         }
         
@@ -1662,14 +1885,17 @@
                 await webgazer.setRegression('ridge').setTracker('clmtrackr').setGazeListener(gazeDataCallback).begin();
                 webgazer.showVideoPreview(true).showPredictionPoints(true).applyKalmanFilter(true);
                 
-                isTracking = true; startTime = Date.now(); webgazerReady = true;
+                isTracking = true; 
+                startTime = Date.now(); 
+                webgazerReady = true;
                 if (firebaseConnected) startAutoSave();
-                startHeatmapSnapshots(); startStatsUpdate();
+                startHeatmapSnapshots(); 
+                startStatsUpdate();
                 startDistanceMeasurement(); // 启动距离测量
                 updateStatus('运行中', 'ready');
                 document.getElementById('calibrateBtn').disabled = false;
                 startBtn.textContent = '✅ 运行中';
-                swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
+                swal('启动成功', '眼动追踪已启动！\n强烈建议您点击"开始校准"以提高精度。', 'success');
             } catch (error) {
                 console.error("启动眼动追踪失败:", error);
                 updateStatus('启动失败', 'error');
@@ -1681,7 +1907,9 @@
         async function performStop() {
             if (firebaseConnected) await saveEyeTrackingData(true);
             isTracking = false;
-            stopAutoSave(); stopHeatmapSnapshots(); stopStatsUpdate();
+            stopAutoSave(); 
+            stopHeatmapSnapshots(); 
+            stopStatsUpdate();
             stopDistanceMeasurement(); // 停止距离测量
             if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
                 webgazer.end();
