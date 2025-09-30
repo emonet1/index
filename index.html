@@ -412,6 +412,81 @@
         document.getElementById('overlayUserId').textContent = userId;
         
         // ===========================================
+        // 新增：收集学生信息的功能
+        // ===========================================
+        async function collectStudentInfo() {
+            const contentDiv = document.createElement('div');
+            contentDiv.innerHTML = `
+                <p style="text-align: left; font-weight: bold;">请输入您的学号和姓名开始实验:</p>
+                <input id="swal-student-id" class="swal-content__input" placeholder="学号 (Student ID)">
+                <input id="swal-student-name" class="swal-content__input" placeholder="姓名 (Name)">
+            `;
+
+            swal({
+                title: "身份信息",
+                content: contentDiv,
+                buttons: {
+                    confirm: {
+                        text: "提交",
+                        value: true,
+                        visible: true,
+                        className: "",
+                        closeModal: false,
+                    },
+                },
+                closeOnClickOutside: false,
+                closeOnEsc: false,
+            }).then(async () => {
+                const idInput = document.getElementById('swal-student-id').value.trim();
+                const nameInput = document.getElementById('swal-student-name').value.trim();
+
+                if (!idInput || !nameInput) {
+                    swal("错误!", "学号和姓名不能为空!", "error");
+                    // 延迟后重新弹出对话框
+                    setTimeout(collectStudentInfo, 1500);
+                    return;
+                }
+
+                studentId = idInput;
+                studentName = nameInput;
+
+                // 更新UI显示
+                document.getElementById('studentIdDisplay').textContent = studentId;
+                document.getElementById('studentNameDisplay').textContent = studentName;
+
+                // 关闭当前弹窗
+                swal.stopLoading();
+                swal.close();
+
+                // 立即保存学生信息到Firebase
+                await saveStudentInfoToFirebase();
+
+                // 继续原有的系统初始化流程
+                await initializeSystem();
+            });
+        }
+        
+        async function saveStudentInfoToFirebase() {
+            debug(`正在保存学生信息: ${studentId} - ${studentName}`);
+            try {
+                await db.collection("student_info_video_v1").add({
+                    studentId,
+                    studentName,
+                    userId,
+                    sessionId,
+                    timestamp: new Date().toISOString(),
+                    experimentType: 'video_eye_tracking'
+                });
+                debug('学生信息成功保存到Firebase。');
+                swal('信息已记录', `学号: ${studentId}\n姓名: ${studentName}`, 'success', { timer: 2000 });
+            } catch (error) {
+                console.error("保存学生信息失败: ", error);
+                debug(`保存学生信息失败: ${error.message}`);
+                swal('保存失败', '无法记录您的信息，请检查网络连接并刷新页面。', 'error');
+            }
+        }
+        
+        // ===========================================
         // 新增：眼部距离测量功能实现
         // ===========================================
         
