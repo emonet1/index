@@ -227,6 +227,52 @@
             background: rgba(0, 120, 240, 1);
             padding-left: 8px;
         }
+        
+        .distance-item {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .distance-value {
+            font-weight: bold;
+            color: #00FF88;
+            font-size: 11px;
+        }
+        
+        .distance-status {
+            padding: 5px 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 10px;
+            margin: 5px 0;
+        }
+        
+        .distance-status.good {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .distance-status.warning {
+            background: #FF9800;
+            color: white;
+        }
+        
+        .distance-status.poor {
+            background: #F44336;
+            color: white;
+        }
+        
+        .distance-calibration {
+            background: rgba(255, 255, 0, 0.3);
+            border: 2px solid #FFD700;
+            padding: 8px;
+            border-radius: 6px;
+            margin: 5px 0;
+            text-align: center;
+            font-size: 10px;
+        }
     </style>
 </head>
 <body>
@@ -818,6 +864,12 @@
                 isFullscreen: isFullscreen
             };
 
+            // 在原有注视点数据中添加距离信息
+            const currentDistance = calculateEyeToScreenDistance();
+            if (currentDistance !== null) {
+                gazePoint.eyeToScreenDistance = currentDistance;
+            }
+
             if (videoPlayer && !videoPlayer.paused && videoPlayer.currentTime > 0 && isVideoExperimentActive) {
                 gazePoint.videoTimestamp = parseFloat(videoPlayer.currentTime.toFixed(4));
                 
@@ -1093,12 +1145,14 @@
                 const infoY = 10;
                 const infoHeight = 100;
                 
+                // 在信息覆盖层中添加距离信息
+                const currentDistance = calculateEyeToScreenDistance();
                 const infoLines = [
-                    `学号: ${studentId} | 姓名: ${studentName}`, // 添加学生信息
+                    `学号: ${studentId} | 姓名: ${studentName}`,
                     `用户ID: ${userId}`,
                     `视频时间: ${currentVideoTime.toFixed(4)}s`,
                     `注视点数: ${allTimeGazePoints.length}`,
-                    `眼部距离: ${currentDistance ? currentDistance + 'cm' : '未测量'}`, // 新增距离信息
+                    `眼部距离: ${currentDistance ? currentDistance + 'cm' : '未测量'}`,
                     `会话ID: ${sessionId.substring(0, 15)}...`
                 ];
                 
@@ -1335,8 +1389,8 @@
             const payload = { 
                 sessionId, 
                 userId, 
-                studentId, // 添加学生信息
-                studentName, // 添加学生信息
+                studentId,
+                studentName,
                 timestamp: new Date().toISOString(), 
                 dataType: isManual ? 'manual' : 'auto',
                 experimentType: 'video_eye_tracking',
@@ -1365,9 +1419,31 @@
                     sessionDuration: Date.now() - startTime
                 }
             };
-            
-            debug(`准备上传Firebase payload，累积热力图点数: ${allTimeGazePoints.length}`);
-            debug(`📊 Payload统计 - 有视频时间戳: ${payload.statistics.videoTimestampGazePoints}, 无视频时间戳: ${payload.statistics.nonVideoTimestampGazePoints}`);
+
+            // 添加距离测量统计到payload
+            if (distanceMeasurements.length > 0) {
+                const distances = distanceMeasurements.map(m => m.distance);
+                const avgDistance = distances.reduce((a, b) => a + b, 0) / distances.length;
+                const minDistance = Math.min(...distances);
+                const maxDistance = Math.max(...distances);
+                const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDistance, 2), 0) / distances.length;
+                const stdDev = Math.sqrt(variance);
+                
+                payload.distanceStatistics = {
+                    totalMeasurements: distanceMeasurements.length,
+                    averageDistance: Math.round(avgDistance * 10) / 10,
+                    minDistance: Math.round(minDistance * 10) / 10,
+                    maxDistance: Math.round(maxDistance * 10) / 10,
+                    standardDeviation: Math.round(stdDev * 10) / 10,
+                    isCalibrated: isDistanceCalibrated,
+                    calibrationInfo: eyeTrackingData.distanceCalibration || null
+                };
+                
+                // 添加距离测量原始数据（最近100个测量值）
+                payload.distanceMeasurements = distanceMeasurements.slice(-100);
+                
+                debug(`距离统计 - 平均: ${payload.distanceStatistics.averageDistance}cm, 标准差: ${payload.distanceStatistics.standardDeviation}cm`);
+            }
             
             eyeTrackingData.gazePoints = []; 
             eyeTrackingData.saccades = []; 
