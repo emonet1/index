@@ -487,7 +487,7 @@
         }
         
         // ===========================================
-        // 新增：眼部距离测量功能实现
+        // 修改：眼部距离测量功能实现
         // ===========================================
         
         // 距离测量算法：基于人脸宽度估算距离
@@ -507,47 +507,90 @@
                     return null;
                 }
                 
-                // CLMTrackr模型特定点位：
-                // 点0和16是面部轮廓的左右边界点
-                // 点36是左眼外角，点45是右眼外角
-                const leftFace = faceModel[0];
-                const rightFace = faceModel[16];
-                const leftEyeOuter = faceModel[36];
-                const rightEyeOuter = faceModel[45];
+                // 参考GitHub项目，使用更多的人脸关键点
+                // CLMTracker模型关键点：
+                // 0-16: 面部轮廓
+                // 17-21: 右眉毛
+                // 22-26: 左眉毛
+                // 27-35: 鼻子
+                // 36-41: 右眼
+                // 42-47: 左眼
+                // 48-67: 嘴巴
                 
-                if (!leftFace || !rightFace || !leftEyeOuter || !rightEyeOuter) {
+                // 检查关键点是否存在
+                if (faceModel.length < 68) {
                     return null;
                 }
                 
-                // 计算人脸宽度（像素）
-                const faceWidthPixels = Math.abs(rightFace.x - leftFace.x);
+                // 方法1: 使用面部轮廓宽度 (点0到点16)
+                const leftFace = faceModel[0];
+                const rightFace = faceModel[16];
                 
-                // 计算眼距（像素）- 更精确的测量点
-                const eyeDistancePixels = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+                // 方法2: 使用眼角距离 (更精确)
+                const leftEyeOuter = faceModel[36]; // 右眼外角
+                const rightEyeOuter = faceModel[45]; // 左眼外角
                 
-                if (gazeCount % 50 === 0) {
-                    debug(`人脸宽度: ${faceWidthPixels.toFixed(2)}px, 眼距: ${eyeDistancePixels.toFixed(2)}px`);
+                // 方法3: 使用眼睛内角距离
+                const leftEyeInner = faceModel[39]; // 右眼内角
+                const rightEyeInner = faceModel[42]; // 左眼内角
+                
+                if (!leftFace || !rightFace || !leftEyeOuter || !rightEyeOuter || !leftEyeInner || !rightEyeInner) {
+                    return null;
                 }
                 
-                // 使用人脸宽度计算距离
-                if (faceWidthPixels > 0) {
-                    let distance;
+                // 计算不同的距离测量值
+                const faceWidthPixels = Math.abs(rightFace.x - leftFace.x);
+                const eyeOuterDistancePixels = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+                const eyeInnerDistancePixels = Math.abs(rightEyeInner.x - leftEyeInner.x);
+                
+                // 调试输出人脸关键点信息
+                if (gazeCount % 100 === 0) {
+                    debug(`人脸关键点: 面宽=${faceWidthPixels.toFixed(2)}px, 眼外角距=${eyeOuterDistancePixels.toFixed(2)}px, 眼内角距=${eyeInnerDistancePixels.toFixed(2)}px`);
+                }
+                
+                // 使用眼角距离作为主要测量方法（更稳定）
+                let distance = null;
+                
+                if (eyeOuterDistancePixels > 0) {
                     if (isDistanceCalibrated && calibratedFaceWidth) {
                         // 使用校准后的参考值
-                        distance = (calibratedFaceWidth * 50) / faceWidthPixels;
+                        distance = (calibratedFaceWidth * 50) / eyeOuterDistancePixels;
+                        debug(`使用校准距离计算: (${calibratedFaceWidth} * 50) / ${eyeOuterDistancePixels} = ${distance.toFixed(2)}cm`);
                     } else {
-                        // 使用默认算法：焦距 * 真实人脸宽度 / 像素人脸宽度
-                        const focalLength = 600;
-                        distance = (focalLength * realFaceWidth) / faceWidthPixels;
+                        // 参考GitHub项目的算法
+                        // 成人平均眼角距离约为10-11cm，这里使用10.5cm作为基准
+                        const averageEyeDistance = 10.5; // 厘米
+                        // 估计焦距（可根据摄像头调整）
+                        const estimatedFocalLength = 500; // 像素
+                        distance = (estimatedFocalLength * averageEyeDistance) / eyeOuterDistancePixels;
+                        
+                        debug(`使用眼角距离算法: (${estimatedFocalLength} * ${averageEyeDistance}) / ${eyeOuterDistancePixels} = ${distance.toFixed(2)}cm`);
                     }
                     
-                    // 合理性检查
-                    if (distance > 10 && distance < 200) {
+                    // 合理性检查：距离应该在20-150cm之间
+                    if (distance > 20 && distance < 150) {
+                        return Math.round(distance * 10) / 10; // 保留一位小数
+                    }
+                }
+                
+                // 如果眼角距离失败，尝试使用面宽
+                if (faceWidthPixels > 0) {
+                    if (isDistanceCalibrated && calibratedFaceWidth) {
+                        distance = (calibratedFaceWidth * 50) / faceWidthPixels;
+                    } else {
+                        // 成人平均面宽约17cm
+                        const averageFaceWidth = 17;
+                        const estimatedFocalLength = 600;
+                        distance = (estimatedFocalLength * averageFaceWidth) / faceWidthPixels;
+                    }
+                    
+                    if (distance > 20 && distance < 150) {
                         return Math.round(distance * 10) / 10;
                     }
                 }
                 
                 return null;
+                
             } catch (error) {
                 debug(`距离计算错误: ${error.message}`);
                 return null;
@@ -673,7 +716,7 @@
                 if (willCalibrate) {
                     debug('开始距离校准...');
                     
-                    // 收集5秒的人脸宽度数据
+                    // 收集5秒的眼角距离数据
                     const calibrationData = [];
                     const calibrationDuration = 5000;
                     const sampleInterval = 200;
@@ -691,14 +734,14 @@
                             const tracker = webgazer.getTracker();
                             if (tracker && tracker.getCurrentPosition) {
                                 const faceModel = tracker.getCurrentPosition();
-                                if (faceModel && faceModel.length > 16) {
-                                    const leftFace = faceModel[0];
-                                    const rightFace = faceModel[16];
-                                    if (leftFace && rightFace) {
-                                        const faceWidth = Math.abs(rightFace.x - leftFace.x);
-                                        if (faceWidth > 0) {
-                                            calibrationData.push(faceWidth);
-                                            debug(`校准采样: ${faceWidth.toFixed(2)}px`);
+                                if (faceModel && faceModel.length >= 68) {
+                                    const leftEyeOuter = faceModel[36];
+                                    const rightEyeOuter = faceModel[45];
+                                    if (leftEyeOuter && rightEyeOuter) {
+                                        const eyeDistance = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+                                        if (eyeDistance > 0) {
+                                            calibrationData.push(eyeDistance);
+                                            debug(`校准采样: 眼角距离=${eyeDistance.toFixed(2)}px`);
                                         }
                                     }
                                 }
@@ -712,24 +755,25 @@
                         clearInterval(calibrationTimer);
                         
                         if (calibrationData.length >= 5) {
-                            // 计算平均人脸宽度
-                            const avgFaceWidth = calibrationData.reduce((a, b) => a + b, 0) / calibrationData.length;
-                            calibratedFaceWidth = avgFaceWidth;
+                            // 计算平均眼角距离
+                            const avgEyeDistance = calibrationData.reduce((a, b) => a + b, 0) / calibrationData.length;
+                            calibratedFaceWidth = avgEyeDistance; // 存储为眼角距离
                             isDistanceCalibrated = true;
                             
-                            debug(`距离校准完成: 平均人脸宽度 = ${avgFaceWidth.toFixed(2)}px (样本数: ${calibrationData.length})`);
+                            debug(`距离校准完成: 平均眼角距离 = ${avgEyeDistance.toFixed(2)}px (样本数: ${calibrationData.length})`);
                             
-                            swal('校准成功！', `已完成距离校准\n参考人脸宽度: ${avgFaceWidth.toFixed(2)}px\n样本数量: ${calibrationData.length}`, 'success');
+                            swal('校准成功！', `已完成距离校准\n参考眼角距离: ${avgEyeDistance.toFixed(2)}px\n样本数量: ${calibrationData.length}`, 'success');
                             
                             // 保存校准信息
                             if (!eyeTrackingData.distanceCalibration) {
                                 eyeTrackingData.distanceCalibration = {};
                             }
                             eyeTrackingData.distanceCalibration = {
-                                calibratedFaceWidth: calibratedFaceWidth,
+                                calibratedEyeDistance: calibratedFaceWidth,
                                 sampleCount: calibrationData.length,
                                 timestamp: new Date().toISOString(),
-                                referenceDistance: 50
+                                referenceDistance: 50,
+                                calibrationType: 'eye_corner_distance'
                             };
                         } else {
                             swal('校准失败', `采集数据不足 (${calibrationData.length}/5)，请确保人脸清晰可见`, 'error');
