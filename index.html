@@ -487,119 +487,131 @@
         }
         
         // ===========================================
-        // 修改：眼部距离测量功能实现
+        // 修复：眼部距离测量功能实现
         // ===========================================
         
         // 距离测量算法：基于人脸宽度估算距离
         function calculateEyeToScreenDistance() {
-            if (!webgazer || !webgazer.isReady() || !isTracking) {
+            // 首先检查基本条件
+            if (!webgazer) {
+                debug('WebGazer对象不存在');
+                return null;
+            }
+            
+            if (!webgazer.isReady()) {
+                debug('WebGazer未就绪');
+                return null;
+            }
+            
+            if (!isTracking) {
+                debug('眼动追踪未启动');
                 return null;
             }
             
             try {
                 const tracker = webgazer.getTracker();
-                if (!tracker || !tracker.getCurrentPosition) {
+                if (!tracker) {
+                    debug('无法获取追踪器');
+                    return null;
+                }
+                
+                if (!tracker.getCurrentPosition) {
+                    debug('追踪器没有getCurrentPosition方法');
                     return null;
                 }
                 
                 const faceModel = tracker.getCurrentPosition();
-                if (!faceModel || faceModel.length === 0) {
+                if (!faceModel) {
+                    debug('无法获取人脸模型');
                     return null;
                 }
                 
-                // 参考GitHub项目，使用更多的人脸关键点
-                // CLMTracker模型关键点：
-                // 0-16: 面部轮廓
-                // 17-21: 右眉毛
-                // 22-26: 左眉毛
-                // 27-35: 鼻子
-                // 36-41: 右眼
-                // 42-47: 左眼
-                // 48-67: 嘴巴
-                
-                // 检查关键点是否存在
-                if (faceModel.length < 68) {
+                if (!Array.isArray(faceModel)) {
+                    debug(`人脸模型不是数组，类型: ${typeof faceModel}`);
                     return null;
                 }
                 
-                // 方法1: 使用面部轮廓宽度 (点0到点16)
-                const leftFace = faceModel[0];
-                const rightFace = faceModel[16];
+                if (faceModel.length === 0) {
+                    debug('人脸模型数组为空');
+                    return null;
+                }
                 
-                // 方法2: 使用眼角距离 (更精确)
+                debug(`人脸模型包含 ${faceModel.length} 个关键点`);
+                
+                // 检查关键点是否足够（CLMTracker通常提供71个点）
+                if (faceModel.length < 47) {
+                    debug(`关键点数量不足: ${faceModel.length}，需要至少47个`);
+                    return null;
+                }
+                
+                // 获取关键点
                 const leftEyeOuter = faceModel[36]; // 右眼外角
                 const rightEyeOuter = faceModel[45]; // 左眼外角
+                const leftFace = faceModel[0];  // 面部左边界
+                const rightFace = faceModel[16]; // 面部右边界
                 
-                // 方法3: 使用眼睛内角距离
-                const leftEyeInner = faceModel[39]; // 右眼内角
-                const rightEyeInner = faceModel[42]; // 左眼内角
-                
-                if (!leftFace || !rightFace || !leftEyeOuter || !rightEyeOuter || !leftEyeInner || !rightEyeInner) {
+                // 验证关键点是否有效
+                if (!leftEyeOuter || !rightEyeOuter) {
+                    debug('眼角关键点无效');
                     return null;
                 }
                 
-                // 计算不同的距离测量值
-                const faceWidthPixels = Math.abs(rightFace.x - leftFace.x);
-                const eyeOuterDistancePixels = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
-                const eyeInnerDistancePixels = Math.abs(rightEyeInner.x - leftEyeInner.x);
-                
-                // 调试输出人脸关键点信息
-                if (gazeCount % 100 === 0) {
-                    debug(`人脸关键点: 面宽=${faceWidthPixels.toFixed(2)}px, 眼外角距=${eyeOuterDistancePixels.toFixed(2)}px, 眼内角距=${eyeInnerDistancePixels.toFixed(2)}px`);
+                if (typeof leftEyeOuter.x !== 'number' || typeof leftEyeOuter.y !== 'number' ||
+                    typeof rightEyeOuter.x !== 'number' || typeof rightEyeOuter.y !== 'number') {
+                    debug('眼角关键点坐标无效');
+                    return null;
                 }
                 
-                // 使用眼角距离作为主要测量方法（更稳定）
+                // 计算眼角距离（像素）
+                const eyeOuterDistancePixels = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+                
+                // 添加详细的调试信息
+                debug(`眼角坐标: 左(${leftEyeOuter.x.toFixed(2)}, ${leftEyeOuter.y.toFixed(2)}), 右(${rightEyeOuter.x.toFixed(2)}, ${rightEyeOuter.y.toFixed(2)})`);
+                debug(`眼角距离: ${eyeOuterDistancePixels.toFixed(2)} 像素`);
+                
+                if (eyeOuterDistancePixels <= 0) {
+                    debug('眼角距离无效或为零');
+                    return null;
+                }
+                
+                // 距离计算
                 let distance = null;
                 
-                if (eyeOuterDistancePixels > 0) {
-                    if (isDistanceCalibrated && calibratedFaceWidth) {
-                        // 使用校准后的参考值
-                        distance = (calibratedFaceWidth * 50) / eyeOuterDistancePixels;
-                        debug(`使用校准距离计算: (${calibratedFaceWidth} * 50) / ${eyeOuterDistancePixels} = ${distance.toFixed(2)}cm`);
-                    } else {
-                        // 参考GitHub项目的算法
-                        // 成人平均眼角距离约为10-11cm，这里使用10.5cm作为基准
-                        const averageEyeDistance = 10.5; // 厘米
-                        // 估计焦距（可根据摄像头调整）
-                        const estimatedFocalLength = 500; // 像素
-                        distance = (estimatedFocalLength * averageEyeDistance) / eyeOuterDistancePixels;
-                        
-                        debug(`使用眼角距离算法: (${estimatedFocalLength} * ${averageEyeDistance}) / ${eyeOuterDistancePixels} = ${distance.toFixed(2)}cm`);
-                    }
+                if (isDistanceCalibrated && calibratedFaceWidth && calibratedFaceWidth > 0) {
+                    // 使用校准后的参考值
+                    distance = (calibratedFaceWidth * 50) / eyeOuterDistancePixels;
+                    debug(`使用校准值计算: (${calibratedFaceWidth} * 50) / ${eyeOuterDistancePixels} = ${distance.toFixed(2)}cm`);
+                } else {
+                    // 使用默认算法
+                    // 成人平均眼角距离约为6.3cm（内角）到10.5cm（外角）
+                    const averageEyeOuterDistance = 10.0; // cm
+                    // 根据常见网络摄像头参数估算的焦距
+                    const estimatedFocalLength = 550; // 像素
+                    distance = (estimatedFocalLength * averageEyeOuterDistance) / eyeOuterDistancePixels;
                     
-                    // 合理性检查：距离应该在20-150cm之间
-                    if (distance > 20 && distance < 150) {
-                        return Math.round(distance * 10) / 10; // 保留一位小数
-                    }
+                    debug(`使用默认算法: (${estimatedFocalLength} * ${averageEyeOuterDistance}) / ${eyeOuterDistancePixels} = ${distance.toFixed(2)}cm`);
                 }
                 
-                // 如果眼角距离失败，尝试使用面宽
-                if (faceWidthPixels > 0) {
-                    if (isDistanceCalibrated && calibratedFaceWidth) {
-                        distance = (calibratedFaceWidth * 50) / faceWidthPixels;
-                    } else {
-                        // 成人平均面宽约17cm
-                        const averageFaceWidth = 17;
-                        const estimatedFocalLength = 600;
-                        distance = (estimatedFocalLength * averageFaceWidth) / faceWidthPixels;
-                    }
-                    
-                    if (distance > 20 && distance < 150) {
-                        return Math.round(distance * 10) / 10;
-                    }
+                // 合理性检查：距离应该在15-200cm之间
+                if (distance < 15 || distance > 200) {
+                    debug(`计算距离超出合理范围: ${distance.toFixed(2)}cm`);
+                    return null;
                 }
                 
-                return null;
+                return Math.round(distance * 10) / 10; // 保留一位小数
                 
             } catch (error) {
-                debug(`距离计算错误: ${error.message}`);
+                debug(`距离计算异常: ${error.message}`);
+                console.error('距离计算错误:', error);
                 return null;
             }
         }
         
-        // 更新距离显示
+        // 修改更新距离显示函数，添加更多调试信息
         function updateDistanceDisplay() {
             const currentDistance = calculateEyeToScreenDistance();
+            
+            debug(`距离测量结果: ${currentDistance !== null ? currentDistance + 'cm' : '无效'}`);
             
             if (currentDistance !== null) {
                 // 添加到测量数据
@@ -640,8 +652,8 @@
                 // 更新距离状态
                 updateDistanceStatus(currentDistance);
                 
-                // 每50次测量记录一次调试信息
-                if (distances.length % 50 === 0) {
+                // 每10次测量记录一次调试信息
+                if (distances.length % 10 === 0) {
                     debug(`距离测量 #${distances.length}: 当前=${currentDistance}cm, 平均=${avgDistance.toFixed(1)}cm, 标准差=${stdDev.toFixed(1)}cm`);
                 }
             } else {
@@ -684,8 +696,26 @@
         // 开始距离测量定时器
         function startDistanceMeasurement() {
             if (distanceUpdateInterval) clearInterval(distanceUpdateInterval);
-            distanceUpdateInterval = setInterval(updateDistanceDisplay, 500);
-            debug('距离测量定时器已启动，每500ms更新一次');
+            
+            // 添加初始检查
+            debug('正在启动距离测量...');
+            debug(`WebGazer状态: ${webgazer ? '已加载' : '未加载'}`);
+            debug(`WebGazer就绪: ${webgazer && webgazer.isReady ? webgazer.isReady() : '无法检查'}`);
+            debug(`追踪状态: ${isTracking}`);
+            
+            // 立即执行一次测量作为测试
+            const testDistance = calculateEyeToScreenDistance();
+            debug(`初始距离测试: ${testDistance !== null ? testDistance + 'cm' : '测试失败'}`);
+            
+            distanceUpdateInterval = setInterval(() => {
+                try {
+                    updateDistanceDisplay();
+                } catch (error) {
+                    debug(`距离测量更新错误: ${error.message}`);
+                }
+            }, 1000); // 改为1秒更新一次，便于调试
+            
+            debug('距离测量定时器已启动，每1000ms更新一次');
         }
         
         // 停止距离测量定时器
