@@ -627,7 +627,48 @@
             return GE(MM(XT(X), X), MM(XT(X), y.map(v => [v])));
         }
 
-        function finishDistanceTest() {
+        async function saveDistanceDataToFirebase() {
+            // 确保在调用 testFirebaseConnection 后 firebaseConnected 状态是正确的
+            if (!firebaseConnected) {
+                await testFirebaseConnection(); // 尝试重新连接和测试
+            }
+
+            if (!firebaseConnected) {
+                debug('Firebase未连接，无法独立保存距离数据。数据已暂存，将随眼动数据一同保存。');
+                swal('网络问题', '无法连接到服务器记录距离数据，数据已暂存。', 'warning');
+                return;
+            }
+
+            const distanceData = eyeTrackingData.distanceMeasurement;
+            if (!distanceData || typeof distanceData.finalDistance === 'undefined') {
+                debug('没有有效的最终距离数据可保存。');
+                return;
+            }
+
+            debug(`正在保存距离测量数据: ${distanceData.finalDistance}cm`);
+            try {
+                await db.collection("distance_measurement_data_v1").add({
+                    studentId,
+                    studentName,
+                    userId,
+                    sessionId,
+                    timestamp: new Date().toISOString(),
+                    experimentType: 'distance_measurement_pre_test',
+                    distanceMeasurement: distanceData
+                });
+                debug('距离测量数据成功保存到Firebase。');
+                swal('距离已记录', `您与屏幕的最终测量距离为: ${distanceData.finalDistance}cm`, 'success', { timer: 2500 });
+            } catch (error) {
+                console.error("保存距离数据失败: ", error);
+                debug(`保存距离数据失败: ${error.message}`);
+                swal('保存失败', '无法记录您的距离数据，但数据已暂存，将随眼动数据一同保存。', 'error');
+            }
+        }
+
+        async function finishDistanceTest() {
+            // 保存距离数据到 Firebase
+            await saveDistanceDataToFirebase();
+
             // 停止摄像头和检测
             if (distanceDetectionRequest) cancelAnimationFrame(distanceDetectionRequest);
             if (distance_video && distance_video.srcObject) {
@@ -1551,6 +1592,7 @@
                 timestamp: new Date().toISOString(), 
                 dataType: isManual ? 'manual' : 'auto',
                 experimentType: 'video_eye_tracking',
+                distanceMeasurement: dataToSave.distanceMeasurement, // 添加距离测量数据
                 videoInfo: {
                     videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
                     videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null,
