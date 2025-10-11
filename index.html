@@ -462,11 +462,12 @@
                 isVideoExperimentActive = false;
                 stopVideoInfoUpdate();
                 exitFullscreen();
+                // 关键代码：在视频结束后显示提示信息
                 swal('实验结束', '视频播放已结束，正在准备热力图，请稍候...', 'success', {
                     buttons: false,
                     timer: 3000,
                 });
-                // 新增：视频结束后调用保存热力图的函数
+                // 视频结束后调用保存热力图的函数
                 saveAllHeatmaps();
             };
 
