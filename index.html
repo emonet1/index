@@ -3,15 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼动追踪与距离监测数据收集系统</title>
+    <title>眼动追踪数据收集系统 - 视频观看版</title>
     
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
-    
-    <!-- MediaPipe SDK for distance measurement -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     
     <script>
         const firebaseConfig = {
@@ -184,57 +180,6 @@
             border-radius: 4px;
             border: 1px solid #ccc;
         }
-
-        /* --- 距离监测器样式 --- */
-        #distance-measurement-section {
-            display: none; /* 默认隐藏 */
-            font-family: 'Arial', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 3000;
-            overflow-y: auto;
-        }
-        .distance-container {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 900px;
-            width: 95%;
-            margin: 20px auto;
-        }
-        .distance-container h1 { text-align: center; color: #667eea; margin-bottom: 20px; font-size: 28px; }
-        .distance-video-container { position: relative; width: 100%; max-width: 640px; margin: 0 auto; border-radius: 15px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
-        .distance-video-container video { width: 100%; display: block; transform: scaleX(-1); }
-        .distance-video-container canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); }
-        .distance-controls { margin-top: 30px; }
-        .distance-mode-section { margin-bottom: 25px; padding: 20px; background: #f8f9fa; border-radius: 10px; }
-        .distance-mode-section h2 { color: #667eea; font-size: 20px; margin-bottom: 15px; }
-        .distance-btn { padding: 12px 24px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: all 0.3s; margin: 5px; }
-        .distance-btn-primary { background: #667eea; color: white; }
-        .distance-btn-primary:hover { background: #5568d3; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(102,126,234,0.4); }
-        .distance-btn-success { background: #48bb78; color: white; }
-        .distance-btn-success:hover { background: #38a169; }
-        .distance-btn-danger { background: #f56565; color: white; }
-        .distance-btn-danger:hover { background: #e53e3e; }
-        .distance-input-group { margin: 15px 0; }
-        .distance-input-group label { display: block; margin-bottom: 8px; color: #4a5568; font-weight: 600; }
-        .distance-input-group input { width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 16px; }
-        .distance-input-group input:focus { outline: none; border-color: #667eea; }
-        .distance-calibration-list { margin-top: 15px; }
-        .distance-calibration-item { background: white; padding: 10px; margin: 8px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-        .distance-status { padding: 15px; margin-top: 20px; border-radius: 8px; text-align: center; font-weight: 600; font-size: 18px; }
-        .distance-status-safe { background: #c6f6d5; color: #22543d; }
-        .distance-status-warning { background: #fed7d7; color: #742a2a; }
-        .distance-instructions { background: #edf2f7; padding: 15px; border-radius: 8px; margin-bottom: 15px; line-height: 1.6; color: #4a5568; }
-        .distance-instructions ol { margin-left: 20px; }
-        .distance-instructions li { margin: 8px 0; }
     </style>
 </head>
 <body>
@@ -266,6 +211,7 @@
         <button class="btn test" onclick="testOverlayVisibility()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">👁️ 测试覆盖层</button>
         <button class="btn test" onclick="testDataCollection()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">📊 测试数据收集</button>
         <button class="btn test" onclick="testFullscreenCapture()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px;">🎬 测试全屏截图</button>
+        <button class="btn test" onclick="downloadCurrentHeatmap()" style="width: 100%; margin-top: 4px; padding: 4px; font-size: 10px; background: #4CAF50;">💾 下载当前热力图</button>
     </div>
 
     <div id="debugPanel"><div id="debugInfo">调试信息将在这里显示...</div></div>
@@ -281,54 +227,6 @@
         <input type="button" class="Calibration" id="Pt7">
         <input type="button" class="Calibration" id="Pt8">
         <input type="button" class="Calibration" id="Pt9">
-    </div>
-
-    <div id="distance-measurement-section">
-        <div class="distance-container">
-            <h1>👁️ 步骤1: 眼睛与屏幕距离监测</h1>
-            
-            <div class="distance-video-container">
-                <video id="distance-video" autoplay playsinline></video>
-                <canvas id="distance-canvas"></canvas>
-            </div>
-    
-            <div class="distance-controls">
-                <!-- 校准模式 -->
-                <div class="distance-mode-section" id="distanceCalibrationSection">
-                    <h2>📏 校准模式</h2>
-                    <div class="distance-instructions">
-                        <ol>
-                            <li>用尺子测量您的眼睛到屏幕的实际距离（厘米）。</li>
-                            <li>保持该距离不动，输入距离值。</li>
-                            <li>点击"记录校准点"按钮。</li>
-                            <li>至少记录3个不同距离的校准点（建议：30cm、50cm、70cm）。</li>
-                        </ol>
-                    </div>
-                    <div class="distance-input-group">
-                        <label for="actualDistance">实际距离（厘米）：</label>
-                        <input type="number" id="actualDistance" placeholder="例如：50" min="10" max="200">
-                    </div>
-                    <button class="distance-btn distance-btn-primary" onclick="recordCalibration()">📌 记录校准点</button>
-                    <div class="distance-calibration-list" id="calibrationList"></div>
-                    <button class="distance-btn distance-btn-success" onclick="startMonitoring()" id="startMonitorBtn" style="display:none; margin-top: 15px;">
-                        ✅ 开始监测
-                    </button>
-                </div>
-    
-                <!-- 监测模式 -->
-                <div class="distance-mode-section" id="monitoringSection" style="display:none;">
-                    <h2>👀 实时监测</h2>
-                    <div class="distance-instructions">
-                        系统正在实时监测您与屏幕的距离。建议保持距离大于51厘米以保护视力。
-                        <br><strong>点击下方按钮完成此步骤，并开始眼动追踪实验。</strong>
-                    </div>
-                    <button class="distance-btn distance-btn-danger" onclick="resetCalibration()">🔄 重新校准</button>
-                    <button class="distance-btn distance-btn-success" onclick="finishDistanceTest()">➡️ 完成并开始眼动实验</button>
-                </div>
-    
-                <div class="distance-status" id="distance-status"></div>
-            </div>
-        </div>
     </div>
 
     <div id="content">
@@ -376,7 +274,7 @@
         var PointCalibrate = 0;
         var CalibrationPoints = {};
         
-        let eyeTrackingData = { gazePoints: [], saccades: [], fixations: [], heatmapSnapshots: [], calibrationData: { points: [], accuracyPercentage: null, timestamp: null }, distanceMeasurement: {} };
+        let eyeTrackingData = { gazePoints: [], saccades: [], fixations: [], heatmapSnapshots: [], calibrationData: { points: [], accuracyPercentage: null, timestamp: null } };
 
         let persistentHeatmapData = [];
         let allTimeGazePoints = [];
@@ -441,8 +339,8 @@
                 // 立即保存学生信息到Firebase
                 await saveStudentInfoToFirebase();
 
-                // 新流程：开始距离测试
-                startDistanceCalibrationPhase();
+                // 继续原有的系统初始化流程
+                await initializeSystem();
             });
         }
         
@@ -464,225 +362,6 @@
                 debug(`保存学生信息失败: ${error.message}`);
                 swal('保存失败', '无法记录您的信息，请检查网络连接并刷新页面。', 'error');
             }
-        }
-
-        // ===========================================
-        // 距离监测逻辑
-        // ===========================================
-        let distance_video, distance_canvas, distance_ctx;
-        let faceDetection;
-        let isCalibratingDistance = true;
-        let calibrationData = [];
-        let distanceCoefficients = null;
-        let currentEyeDistance = 0;
-        let distanceDetectionRequest;
-
-        function startDistanceCalibrationPhase() {
-            document.getElementById('distance-measurement-section').style.display = 'block';
-            document.getElementById('content').style.display = 'none';
-            document.getElementById('statsPanel').style.display = 'none';
-            initDistanceMeasurement();
-        }
-
-        async function initDistanceMeasurement() {
-            distance_video = document.getElementById('distance-video');
-            distance_canvas = document.getElementById('distance-canvas');
-            distance_ctx = distance_canvas.getContext('2d');
-
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-                distance_video.srcObject = stream;
-                distance_video.onloadedmetadata = () => {
-                    distance_canvas.width = distance_video.videoWidth;
-                    distance_canvas.height = distance_video.videoHeight;
-                };
-            } catch (err) {
-                swal('错误', '无法访问摄像头: ' + err.message, 'error');
-                return;
-            }
-
-            faceDetection = new FaceDetection({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}` });
-            faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.75 });
-            faceDetection.onResults(onDistanceResults);
-            detectFaceDistance();
-        }
-
-        async function detectFaceDistance() {
-            if (distance_video && distance_video.readyState === 4) {
-                await faceDetection.send({ image: distance_video });
-            }
-            distanceDetectionRequest = requestAnimationFrame(detectFaceDistance);
-        }
-
-        function onDistanceResults(results) {
-            distance_ctx.clearRect(0, 0, distance_canvas.width, distance_canvas.height);
-            if (results.detections && results.detections.length > 0) {
-                const detection = results.detections[0];
-                const bbox = detection.boundingBox;
-                const x = bbox.xCenter * distance_canvas.width - (bbox.width * distance_canvas.width) / 2;
-                const y = bbox.yCenter * distance_canvas.height - (bbox.height * distance_canvas.height) / 2;
-                const w = bbox.width * distance_canvas.width;
-                const h = bbox.height * distance_canvas.height;
-                const landmarks = detection.landmarks;
-                if (landmarks && landmarks.length >= 2) {
-                    const leftEye = { x: landmarks[0].x * distance_canvas.width, y: landmarks[0].y * distance_canvas.height };
-                    const rightEye = { x: landmarks[1].x * distance_canvas.width, y: landmarks[1].y * distance_canvas.height };
-                    currentEyeDistance = Math.sqrt(Math.pow(leftEye.x - rightEye.x, 2) + Math.pow(leftEye.y - rightEye.y, 2));
-                    if (isCalibratingDistance) {
-                        drawCalibrationMode(x, y, w, h, leftEye, rightEye);
-                    } else {
-                        drawMonitoringMode(x, y, w, h);
-                    }
-                }
-            }
-        }
-
-        function drawCalibrationMode(x, y, w, h, leftEye, rightEye) {
-            const color = '#4ca8f0';
-            drawBoundingBox(x, y, w, h, color);
-            distance_ctx.fillStyle = color;
-            distance_ctx.beginPath(); distance_ctx.arc(leftEye.x, leftEye.y, 8, 0, 2 * Math.PI); distance_ctx.fill();
-            distance_ctx.beginPath(); distance_ctx.arc(rightEye.x, rightEye.y, 8, 0, 2 * Math.PI); distance_ctx.fill();
-            distance_ctx.strokeStyle = color; distance_ctx.lineWidth = 3;
-            distance_ctx.beginPath(); distance_ctx.moveTo(leftEye.x, leftEye.y); distance_ctx.lineTo(rightEye.x, rightEye.y); distance_ctx.stroke();
-            distance_ctx.font = 'bold 24px Arial';
-            distance_ctx.fillText(`${Math.round(currentEyeDistance)} px`, leftEye.x, leftEye.y - 15);
-        }
-
-        function drawMonitoringMode(x, y, w, h) {
-            if (!distanceCoefficients) return;
-            const [a, b, c] = distanceCoefficients;
-            const distance = a * currentEyeDistance * currentEyeDistance + b * currentEyeDistance + c;
-            const isSafe = distance > 51;
-            const color = isSafe ? '#00ffff' : '#ff00ff';
-            drawBoundingBox(x, y, w, h, color);
-            distance_ctx.font = 'bold 24px Arial'; distance_ctx.fillStyle = color;
-            const statusText = isSafe ? '安全' : '太近';
-            distance_ctx.fillText(`${Math.round(distance)} cm - ${statusText}`, x, y - 15);
-            const statusDiv = document.getElementById('distance-status');
-            statusDiv.className = 'distance-status ' + (isSafe ? 'distance-status-safe' : 'distance-status-warning');
-            statusDiv.textContent = `当前距离：${Math.round(distance)} cm - ${statusText}`;
-            eyeTrackingData.distanceMeasurement.finalDistance = Math.round(distance);
-        }
-
-        function drawBoundingBox(x, y, w, h, color) {
-            distance_ctx.strokeStyle = color; distance_ctx.lineWidth = 2;
-            distance_ctx.strokeRect(x, y, w, h);
-        }
-
-        function recordCalibration() {
-            const actualDistance = parseFloat(document.getElementById('actualDistance').value);
-            if (!actualDistance || actualDistance < 10 || actualDistance > 200) { swal('提示', '请输入有效的距离值（10-200厘米）', 'warning'); return; }
-            if (currentEyeDistance === 0) { swal('提示', '未检测到人脸，请确保面向摄像头', 'warning'); return; }
-            calibrationData.push({ pixel: currentEyeDistance, cm: actualDistance });
-            updateCalibrationList();
-            document.getElementById('actualDistance').value = '';
-            if (calibrationData.length >= 3) document.getElementById('startMonitorBtn').style.display = 'inline-block';
-        }
-
-        function updateCalibrationList() {
-            const list = document.getElementById('calibrationList');
-            list.innerHTML = '<h3 style="margin-top: 15px;">已记录的校准点：</h3>';
-            calibrationData.forEach((data, index) => {
-                const item = document.createElement('div');
-                item.className = 'distance-calibration-item';
-                item.innerHTML = `<span>点${index + 1}: ${Math.round(data.pixel)} 像素 = ${data.cm} 厘米</span> <button class="distance-btn distance-btn-danger" onclick="removeCalibration(${index})" style="padding: 5px 10px;">删除</button>`;
-                list.appendChild(item);
-            });
-        }
-
-        function removeCalibration(index) {
-            calibrationData.splice(index, 1);
-            updateCalibrationList();
-            if (calibrationData.length < 3) document.getElementById('startMonitorBtn').style.display = 'none';
-        }
-
-        function startMonitoring() {
-            if (calibrationData.length < 3) { swal('提示', '至少需要3个校准点才能开始监测', 'warning'); return; }
-            const pixels = calibrationData.map(d => d.pixel);
-            const cms = calibrationData.map(d => d.cm);
-            distanceCoefficients = polyfit(pixels, cms, 2);
-            eyeTrackingData.distanceMeasurement.calibrationData = calibrationData;
-            eyeTrackingData.distanceMeasurement.coefficients = distanceCoefficients;
-            isCalibratingDistance = false;
-            document.getElementById('distanceCalibrationSection').style.display = 'none';
-            document.getElementById('monitoringSection').style.display = 'block';
-        }
-
-        function resetCalibration() {
-            isCalibratingDistance = true; calibrationData = []; distanceCoefficients = null;
-            document.getElementById('distanceCalibrationSection').style.display = 'block';
-            document.getElementById('monitoringSection').style.display = 'none';
-            document.getElementById('startMonitorBtn').style.display = 'none';
-            document.getElementById('distance-status').textContent = '';
-            updateCalibrationList();
-        }
-
-        function polyfit(x, y, degree) {
-            const n = x.length, X = [];
-            for (let i = 0; i < n; i++) { X[i] = []; for (let j = 0; j <= degree; j++) { X[i][j] = Math.pow(x[i], degree - j); } }
-            const XT = (m) => m[0].map((_, i) => m.map(row => row[i]));
-            const MM = (a, b) => { const r = []; for (let i = 0; i < a.length; i++) { r[i] = []; for (let j = 0; j < b[0].length; j++) { let s = 0; for (let k = 0; k < a[0].length; k++) { s += a[i][k] * b[k][j]; } r[i][j] = s; } } return r; };
-            const GE = (A, b) => { const n = A.length; for (let i = 0; i < n; i++) A[i].push(b[i][0]); for (let i = 0; i < n; i++) { let max = i; for (let k = i + 1; k < n; k++) if (Math.abs(A[k][i]) > Math.abs(A[max][i])) max = k; [A[i], A[max]] = [A[max], A[i]]; for (let k = i + 1; k < n; k++) { const f = A[k][i] / A[i][i]; for (let j = i; j <= n; j++) A[k][j] -= f * A[i][j]; } } const x = new Array(n); for (let i = n - 1; i >= 0; i--) { x[i] = A[i][n]; for (let j = i + 1; j < n; j++) x[i] -= A[i][j] * x[j]; x[i] /= A[i][i]; } return x; };
-            return GE(MM(XT(X), X), MM(XT(X), y.map(v => [v])));
-        }
-
-        async function saveDistanceDataToFirebase() {
-            // 确保在调用 testFirebaseConnection 后 firebaseConnected 状态是正确的
-            if (!firebaseConnected) {
-                await testFirebaseConnection(); // 尝试重新连接和测试
-            }
-
-            if (!firebaseConnected) {
-                debug('Firebase未连接，无法独立保存距离数据。数据已暂存，将随眼动数据一同保存。');
-                swal('网络问题', '无法连接到服务器记录距离数据，数据已暂存。', 'warning');
-                return;
-            }
-
-            const distanceData = eyeTrackingData.distanceMeasurement;
-            if (!distanceData || typeof distanceData.finalDistance === 'undefined') {
-                debug('没有有效的最终距离数据可保存。');
-                return;
-            }
-
-            debug(`正在保存距离测量数据: ${distanceData.finalDistance}cm`);
-            try {
-                await db.collection("distance_measurement_data_v1").add({
-                    studentId,
-                    studentName,
-                    userId,
-                    sessionId,
-                    timestamp: new Date().toISOString(),
-                    experimentType: 'distance_measurement_pre_test',
-                    distanceMeasurement: distanceData
-                });
-                debug('距离测量数据成功保存到Firebase。');
-                swal('距离已记录', `您与屏幕的最终测量距离为: ${distanceData.finalDistance}cm`, 'success', { timer: 2500 });
-            } catch (error) {
-                console.error("保存距离数据失败: ", error);
-                debug(`保存距离数据失败: ${error.message}`);
-                swal('保存失败', '无法记录您的距离数据，但数据已暂存，将随眼动数据一同保存。', 'error');
-            }
-        }
-
-        async function finishDistanceTest() {
-            // 保存距离数据到 Firebase
-            await saveDistanceDataToFirebase();
-
-            // 停止摄像头和检测
-            if (distanceDetectionRequest) cancelAnimationFrame(distanceDetectionRequest);
-            if (distance_video && distance_video.srcObject) {
-                distance_video.srcObject.getTracks().forEach(track => track.stop());
-            }
-            if(faceDetection) faceDetection.close();
-
-            // 隐藏距离测试UI，显示眼动追踪UI
-            document.getElementById('distance-measurement-section').style.display = 'none';
-            document.getElementById('content').style.display = 'block';
-            document.getElementById('statsPanel').style.display = 'block';
-
-            // 继续原有的系统初始化流程
-            initializeSystem();
         }
         
         // ===========================================
@@ -1592,7 +1271,6 @@
                 timestamp: new Date().toISOString(), 
                 dataType: isManual ? 'manual' : 'auto',
                 experimentType: 'video_eye_tracking',
-                distanceMeasurement: dataToSave.distanceMeasurement, // 添加距离测量数据
                 videoInfo: {
                     videoUrl: document.getElementById('eyeTrackingVideoPlayer').src,
                     videoDuration: document.getElementById('eyeTrackingVideoPlayer').duration || null,
@@ -1787,6 +1465,7 @@
         // =======================================================================
         // 系统控制与生命周期
         // =======================================================================
+
         function toggleDebug() { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode ? 'block' : 'none'; }
         
         function toggleHeatmap() { 
@@ -1841,7 +1520,7 @@
                 startHeatmapSnapshots(); startStatsUpdate();
                 updateStatus('运行中', 'ready');
                 document.getElementById('calibrateBtn').disabled = false;
-                startBtn.textContent = '✅ 运行中';
+                               startBtn.textContent = '✅ 运行中';
                 swal('启动成功', '眼动追踪已启动！\n强烈建议您点击“开始校准”以提高精度。', 'success');
             } catch (error) {
                 console.error("启动眼动追踪失败:", error);
