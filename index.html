@@ -220,7 +220,7 @@
             <div class="stimulus-container">
                 <img
                     id="stimulusImage"
-                    src="https://res.cloudinary.com/ddp3tohxk/image/upload/v1760178621/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2025-10-11_182853_ho0ok6.png"
+                    src="https://res.cloudinary.com/ddp3tohxk/image/upload/v1760178622/%E5%B1%8F%E5%B9%95%E6%88%AA%E5%9B%BE_2025-10-11_182948_qeq6iu.png"
                     alt="Experiment Stimulus Image"
                     width="100%"
                     crossorigin="anonymous"
@@ -621,96 +621,70 @@
 
         function stopHeatmapSnapshots() { if (heatmapSnapshotInterval) clearInterval(heatmapSnapshotInterval); }
 
-        // ===========================================
-        // ===== START: MODIFIED CODE BLOCK ==========
-        // ===========================================
         async function captureHeatmapSnapshot() {
             try {
                 debug(`热力图快照捕获开始 - 累积点数: ${allTimeGazePoints.length}`);
 
-                const stimulusImage = document.getElementById('stimulusImage');
-                if (!stimulusImage) {
-                    debug("错误：无法找到ID为 'stimulusImage' 的刺激图片元素。");
+                const originalImage = document.getElementById('stimulusImage');
+                if (!originalImage) {
+                    debug("无法找到刺激图片元素。");
                     return;
                 }
 
-                // 1. 获取图片的位置和尺寸，这是坐标转换的关键
-                const imageRect = stimulusImage.getBoundingClientRect();
-
-                // 2. 只截取刺激图片区域
-                const imageCanvas = await html2canvas(stimulusImage);
-                const imageCtx = imageCanvas.getContext('2d');
-                debug(`图片Canvas尺寸: ${imageCanvas.width}x${imageCanvas.height}`);
+                const screenshotCanvas = await html2canvas(document.body);
+                const screenshotCtx = screenshotCanvas.getContext('2d');
+                debug(`截图Canvas尺寸: ${screenshotCanvas.width}x${screenshotCanvas.height}`);
 
                 if (allTimeGazePoints.length > 0) {
-                    // 3. 创建一个临时的热力图容器，尺寸与图片完全相同
+                    debug(`正在重建热力图，包含 ${allTimeGazePoints.length} 个累积数据点`);
                     const tempHeatmapContainer = document.createElement('div');
                     tempHeatmapContainer.style.position = 'absolute';
-                    // 将其放置在屏幕外，避免用户看到
-                    tempHeatmapContainer.style.left = '-9999px';
-                    tempHeatmapContainer.style.top = '-9999px';
-                    tempHeatmapContainer.style.width = imageRect.width + 'px';
-                    tempHeatmapContainer.style.height = imageRect.height + 'px';
+                    tempHeatmapContainer.style.top = '0';
+                    tempHeatmapContainer.style.left = '0';
+                    tempHeatmapContainer.style.width = screenshotCanvas.width + 'px';
+                    tempHeatmapContainer.style.height = screenshotCanvas.height + 'px';
                     document.body.appendChild(tempHeatmapContainer);
 
                     const tempHeatmapInstance = h337.create({
                         container: tempHeatmapContainer,
-                        radius: Math.max(20, imageRect.width / 40), // 半径根据图片大小动态调整
-                        maxOpacity: 0.7,
+                        radius: Math.max(25, screenshotCanvas.width / 60),
+                        maxOpacity: 0.8,
                         minOpacity: 0.1,
-                        blur: 0.85
+                        blur: 0.8
                     });
 
-                    // 4. 转换坐标并过滤掉不在图片上的点
-                    const relativeGazePoints = allTimeGazePoints
-                        .map(p => ({
-                            x: Math.floor(p.x - imageRect.left), // 全局坐标 -> 图片内相对坐标
-                            y: Math.floor(p.y - imageRect.top),
-                            value: 5
-                        }))
-                        .filter(p => p.x > 0 && p.x < imageRect.width && p.y > 0 && p.y < imageRect.height);
+                    tempHeatmapInstance.setData({
+                        data: allTimeGazePoints.map(p => ({ x: p.x, y: p.y, value: 5 })),
+                        max: 10
+                    });
 
-                    debug(`正在为图片生成热力图，有效数据点: ${relativeGazePoints.length} / ${allTimeGazePoints.length}`);
-                    
-                    if (relativeGazePoints.length > 0) {
-                        tempHeatmapInstance.setData({
-                            data: relativeGazePoints,
-                            max: 10
-                        });
+                    await new Promise(resolve => setTimeout(resolve, 100));
 
-                        // 确保热力图有足够时间渲染
-                        await new Promise(resolve => setTimeout(resolve, 150));
-
-                        // 5. 将生成的热力图Canvas叠加到图片截图上
-                        const tempHeatmapCanvas = tempHeatmapContainer.querySelector('canvas');
-                        if (tempHeatmapCanvas) {
-                            imageCtx.globalAlpha = 0.65; // 设置叠加的透明度
-                            imageCtx.drawImage(tempHeatmapCanvas, 0, 0, imageRect.width, imageRect.height);
-                            imageCtx.globalAlpha = 1.0;
-                            debug('热力图已成功叠加到图片截图中');
-                        }
+                    const tempHeatmapCanvas = tempHeatmapContainer.querySelector('canvas');
+                    if (tempHeatmapCanvas) {
+                        screenshotCtx.globalAlpha = 0.7;
+                        screenshotCtx.drawImage(tempHeatmapCanvas, 0, 0);
+                        screenshotCtx.globalAlpha = 1.0;
+                        debug('热力图已成功叠加到截图中');
                     }
-                    // 移除临时容器
                     document.body.removeChild(tempHeatmapContainer);
                 }
 
-                // 6. (可选) 在最终的图片上添加文本信息
                 const infoLines = [
-                    `学号: ${studentId}`,
-                    `姓名: ${studentName}`,
+                    `学号: ${studentId} | 姓名: ${studentName}`,
+                    `用户ID: ${userId}`,
                     `注视点数: ${allTimeGazePoints.length}`,
-                    `时间: ${new Date().toLocaleTimeString()}`
+                    `时间: ${new Date().toLocaleString()}`
                 ];
-                imageCtx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                imageCtx.fillRect(5, 5, 200, 70);
-                imageCtx.fillStyle = '#FFFFFF';
-                imageCtx.font = 'bold 12px Arial';
+                screenshotCtx.fillStyle = 'rgba(33, 150, 243, 0.8)';
+                screenshotCtx.fillRect(10, 10, 300, 80);
+                screenshotCtx.fillStyle = '#FFFFFF';
+                screenshotCtx.font = 'bold 14px Arial';
                 infoLines.forEach((line, index) => {
-                    imageCtx.fillText(line, 10, 20 + (index * 15));
+                    screenshotCtx.fillText(line, 20, 30 + (index * 16));
                 });
                 
-                // 7. 上传到Cloudinary
-                const imageDataUrl = imageCanvas.toDataURL('image/png', 0.95);
+                const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.95);
                 const cloudName = 'ddp3tohxk';
                 const uploadPreset = 'index1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
@@ -723,7 +697,7 @@
                 formData.append('public_id', heatmapFileName);
 
                 const response = await fetch(url, { method: 'POST', body: formData });
-                if (!response.ok) throw new Error(`Cloudinary上传失败: ${response.statusText}`);
+                if (!response.ok) throw new Error('Cloudinary上传失败');
                 
                 const data = await response.json();
                 debug(`热力图上传成功: ${data.secure_url}`);
@@ -745,9 +719,6 @@
                 debug(`捕获热力图快照时出错: ${error.message}`);
             }
         }
-        // ===========================================
-        // ===== END: MODIFIED CODE BLOCK ==========
-        // ===========================================
 
         function startAutoSave() {
             if (autoSaveInterval) clearInterval(autoSaveInterval);
