@@ -457,19 +457,39 @@
                 debug(`isVideoExperimentActive 设置为: ${isVideoExperimentActive}`);
             };
 
+            // =======================================================================
+            // MODIFICATION START: Automatic data download on experiment completion
+            // =======================================================================
             videoPlayer.onended = () => {
                 debug('视频播放结束');
                 isVideoExperimentActive = false;
                 stopVideoInfoUpdate();
                 exitFullscreen();
-                // 关键代码：在视频结束后显示提示信息
-                swal('实验结束', '视频播放已结束，正在准备热力图，请稍候...', 'success', {
+                
+                swal('实验结束', '视频播放已结束。正在处理最终数据，请稍候...', 'success', {
                     buttons: false,
-                    timer: 3000,
+                    timer: 4000,
                 });
+
                 // 视频结束后调用保存热力图的函数
                 saveAllHeatmaps();
+
+                // 新增：实验结束后自动下载眼动数据
+                setTimeout(() => {
+                    debug('实验结束，自动触发本地数据下载。');
+                    swal({
+                        title: '数据下载',
+                        text: '实验数据将自动下载到您的本地设备。',
+                        icon: 'info',
+                        button: '好的',
+                    }).then(() => {
+                        exportData(); // 调用现有的导出函数
+                    });
+                }, 3500); // 稍作延迟以确保其他操作完成
             };
+            // =======================================================================
+            // MODIFICATION END
+            // =======================================================================
 
             videoPlayer.addEventListener('seeking', (e) => {
                 if (isVideoExperimentActive) {
