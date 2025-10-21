@@ -35,15 +35,12 @@
         console.log('会话ID:', sessionId);
         console.log('用户ID:', userId);
 
-        // =================================================================
-        // ======================= 【核心修改点】 ==========================
-        // =================================================================
         // 动态加载WebGazer
         async function loadWebGazerScript() {
             const sources = [
-                // **【核心修改】** 
-                // 优先使用这个社区维护的、已知可用的版本。它已经解决了模型加载失败的问题。
-                'https://cdn.jsdelivr.net/gh/bawaji94/WebGazer/dist/webgazer.js'
+                'https://webgazer.cs.brown.edu/webgazer.js',
+                'https://unpkg.com/webgazer@2.0.2/dist/webgazer.js',
+                'https://cdn.jsdelivr.net/npm/webgazer@2.0.2/dist/webgazer.min.js'
             ];
             for (const source of sources) {
                 try {
@@ -52,8 +49,7 @@
                         script.src = source;
                         script.onload = resolve;
                         script.onerror = () => reject(new Error(`无法从 ${source} 加载WebGazer`));
-                        // 适当增加超时时间以应对网络波动
-                        script.timeout = 15000; 
+                        script.timeout = 10000;
                         document.head.appendChild(script);
                     });
                     console.log(`WebGazer从 ${source} 加载成功`);
@@ -468,33 +464,72 @@
                 debug(`isVideoExperimentActive 设置为: ${isVideoExperimentActive}`);
             };
             
+            // =======================================================================
+            // ==================== 核心修改部分 (START) =============================
+            // =======================================================================
+            // 此处为修改后的 onended 事件处理器，用于解决竞态条件问题
             videoPlayer.onended = () => {
-                debug('视频播放结束');
-                isVideoExperimentActive = false;
+                debug('视频播放结束，立即冻结数据状态以准备最终导出。');
+
+                // --- 关键修改：立即停止所有数据收集和定时器，消除竞态条件 ---
+                isTracking = false; // 停止新数据的 gazeDataCallback 处理
+                isVideoExperimentActive = false; // 更新状态
+                stopAutoSave(); // 停止自动保存定时器
+                stopHeatmapSnapshots(); // 停止热力图快照定时器
+                stopStatsUpdate(); // 停止统计更新
+                if (typeof webgazer !== 'undefined' && webgazer.isReady()) {
+                    webgazer.pause(); // 暂停WebGazer，停止生成新的眼动数据
+                    debug("WebGazer 已暂停。");
+                }
+                // -----------------------------------------------------------
+
                 stopVideoInfoUpdate();
                 exitFullscreen();
-                
-                swal('实验结束', '视频播放已结束。正在处理最终数据，请稍候...', 'success', {
+
+                swal('实验结束', '视频播放已完成。正在处理并保存最终数据，请稍候...', 'success', {
                     buttons: false,
-                    timer: 4000,
+                    timer: 5000, // 增加一点时间给数据处理
+                    closeOnClickOutside: false,
+                    closeOnEsc: false,
                 });
 
-                // 视频结束后调用保存热力图的函数
-                saveAllHeatmaps();
+                // 异步执行最终保存流程，确保顺序正确
+                (async () => {
+                    try {
+                        debug('开始最终数据保存流程...');
+                        // 1. 强制将内存中剩余的最后一部分数据保存到Firebase
+                        await saveEyeTrackingData(true);
+                        debug('最终Firebase数据保存完成。');
 
-                // 实验结束时，自动触发本地数据下载
-                setTimeout(() => {
-                    debug('实验结束，自动触发本地数据下载。');
-                    swal({
-                        title: '数据本地下载',
-                        text: '在视频播放期间的眼动数据将自动下载到您的本地设备。',
-                        icon: 'info',
-                        button: '好的',
-                    }).then(() => {
-                        saveLocalData(); // 调用新的本地保存函数
-                    });
-                }, 3500); // 稍作延迟以确保其他操作完成
+                        // 2. 保存/显示所有热力图
+                        saveAllHeatmaps();
+                        debug('所有热力图处理完成。');
+
+                        // 3. 稍作延迟，然后提示用户下载本地Excel文件
+                        await sleep(4000); // 等待之前的提示框消失
+
+                        debug('准备提示用户进行本地数据下载。');
+                        swal({
+                            title: '数据本地下载',
+                            text: '实验期间的眼动数据将生成一个Excel文件供您下载。',
+                            icon: 'info',
+                            button: '好的，开始下载',
+                            closeOnClickOutside: false,
+                            closeOnEsc: false,
+                        }).then(() => {
+                            saveLocalData(); // 调用本地保存函数
+                        });
+                    } catch (error) {
+                        console.error("最终数据处理流程出错: ", error);
+                        debug(`最终数据处理流程出错: ${error.message}`);
+                        swal('处理出错', '在处理最终数据时发生错误，请查看控制台获取详细信息。', 'error');
+                    }
+                })();
             };
+            // =======================================================================
+            // ==================== 核心修改部分 (END) ===============================
+            // =======================================================================
+
 
             videoPlayer.addEventListener('seeking', (e) => {
                 if (isVideoExperimentActive) {
@@ -529,6 +564,7 @@
             eyeTrackingData.heatmapSnapshots.forEach((snapshot, index) => {
                 const imageUrl = snapshot.storageUrl;
                 const fileName = snapshot.fileName || `heatmap_${index + 1}.png`;
+                // *** 核心修改点：增加了 target="_blank" ***
                 newWindow.document.write(`<a href="${imageUrl}" target="_blank" download="${fileName}"><img src="${imageUrl}" alt="${fileName}"></a>`);
             });
 
@@ -1388,11 +1424,17 @@
         }
 
         // =================================================================
-        // Functions for local data saving to Excel
+        // MODIFICATION START: Functions for local data saving to Excel
         // =================================================================
+
+        /**
+         * 过滤、格式化在视频实验期间收集的眼动数据，并将其保存到
+         * 一个包含四个工作表（Summary、Gaze Points、Saccades、Fixations）的Excel文件中。
+         */
         function saveLocalData() {
             debug('开始将视频实验数据保存到本地Excel文件。');
 
+            // 1. 过滤数据：只包括 isVideoActive 为 true 且有有效视频时间戳的记录。
             const videoGazePoints = sessionGazePoints.filter(p => p.isVideoActive && p.videoTimestamp !== null);
             const videoSaccades = sessionSaccades.filter(s => s.isVideoActive && s.startVideoTimestamp !== null);
             const videoFixations = sessionFixations.filter(f => f.isVideoActive && f.videoTimestamp !== null);
@@ -1405,10 +1447,12 @@
             }
 
             try {
+                // 创建一个新的工作簿
                 const wb = XLSX.utils.book_new();
                 const filePrefix = `eye_tracking_video_${studentId || 'unknown'}_${sessionId}`;
                 const fileName = `${filePrefix}.xlsx`;
 
+                // 2. 创建并添加 "Summary" 工作表
                 const totalFixationDuration = videoFixations.reduce((sum, f) => sum + f.duration, 0);
                 const averageFixationDuration = videoFixations.length > 0 ? Math.round(totalFixationDuration / videoFixations.length) : 0;
 
@@ -1417,7 +1461,7 @@
                     { '项目 (Item)': '姓名 (Student Name)', '值 (Value)': studentName || 'N/A' },
                     { '项目 (Item)': '会话ID (Session ID)', '值 (Value)': sessionId },
                     { '项目 (Item)': '用户ID (User ID)', '值 (Value)': userId },
-                    { '项目 (Item)': '---', '值 (Value)': '---' },
+                    { '项目 (Item)': '---', '值 (Value)': '---' }, // 分隔符
                     { '项目 (Item)': '会话总时长 (sessionDuration) (ms)', '值 (Value)': Date.now() - startTime },
                     { '项目 (Item)': '总注视点数 (totalGazePoints) [视频期间]', '值 (Value)': videoGazePoints.length },
                     { '项目 (Item)': '总注视次数 (totalFixations) [视频期间]', '值 (Value)': videoFixations.length },
@@ -1427,10 +1471,13 @@
                 ];
                 
                 const wsSummary = XLSX.utils.json_to_sheet(summaryData);
+                // 调整列宽以获得更好的可读性
                 wsSummary['!cols'] = [{ wch: 45 }, { wch: 40 }]; 
                 XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
                 debug('“Summary”工作表已创建。');
 
+
+                // 3. 处理并添加“Gaze Points”工作表
                 if (videoGazePoints.length > 0) {
                     const gazeData = videoGazePoints.map(p => ({
                         '视频时间戳 (s)': p.videoTimestamp,
@@ -1446,6 +1493,7 @@
                     debug('“Gaze Points”工作表已创建。');
                 }
 
+                // 4. 处理并添加“Saccades”工作表
                 if (videoSaccades.length > 0) {
                     const flatSaccades = videoSaccades.map(s => ({
                         '开始视频时间戳 (s)': s.startVideoTimestamp,
@@ -1462,6 +1510,7 @@
                     debug('“Saccades”工作表已创建。');
                 }
 
+                // 5. 处理并添加“Fixations”工作表
                 if (videoFixations.length > 0) {
                     const flatFixations = videoFixations.map(f => ({
                         '开始视频时间戳 (s)': f.videoTimestamp,
@@ -1476,6 +1525,7 @@
                     debug('“Fixations”工作表已创建。');
                 }
 
+                // 6. 触发Excel文件下载
                 XLSX.writeFile(wb, fileName);
                 debug(`Excel 文件 '${fileName}' 下载已触发。`);
                 
@@ -1487,6 +1537,10 @@
                 swal('保存失败', '生成Excel文件时发生错误，请查看控制台日志。', 'error');
             }
         }
+        // =================================================================
+        // MODIFICATION END
+        // =================================================================
+
 
         // =======================================================================
         // 官方校准与百分比精度测试流程
@@ -1692,8 +1746,7 @@
                 console.error("启动眼动追踪失败:", error);
                 updateStatus('启动失败', 'error');
                 startBtn.disabled = false;
-                // 这里的错误提示现在更加通用，因为问题可能不再是摄像头权限
-                swal('启动失败', `无法启动眼动追踪。\n请确保您已授权摄像头，并检查网络连接。\n\n${error.message}`, 'error');
+                swal('启动失败', `无法启动眼动追踪。\n请检查摄像头权限。\n\n${error.message}`, 'error');
             }
         }
 
