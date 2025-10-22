@@ -64,7 +64,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.0/heatmap.min.js"></script>
     <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <!-- 新增：引入 SheetJS 库用于生成 Excel 文件 -->
+    <!-- MODIFICATION: 引入 SheetJS 库用于生成 Excel 文件 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #f0f0f0; }
@@ -242,7 +242,7 @@
             <div class="video-container">
                 <video
                     id="eyeTrackingVideoPlayer"
-                    src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1760346432/%E5%8F%8C%E9%AB%98_a6545s.mp4"
+                    src="https://res.cloudinary.com/ddp3tohxk/video/upload/v1760186510/%E5%8F%8C%E4%BD%8E_mdr11q.mp4"
                     width="100%"
                     crossorigin="anonymous"
                     preload="auto"
@@ -546,7 +546,7 @@
         }
 
         // ===========================================
-        // 新增功能：在测试端保存所有热力图
+        // MODIFICATION: 修改热力图保存/查看功能
         // ===========================================
         function saveAllHeatmaps() {
             debug(`开始保存所有热力图，共 ${eyeTrackingData.heatmapSnapshots.length} 张`);
@@ -1266,8 +1266,8 @@
                 }
 
                 const imageDataUrl = screenshotCanvas.toDataURL('image/png', 0.95);
-                const cloudName = 'ddp3tohxk';
-                const uploadPreset = 'index1';
+                const cloudName = 'dv038sw9u';
+                const uploadPreset = '品牌直播间1';
                 const url = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
 
                 const heatmapFileName = `${studentId}_${studentName}_${currentVideoTime.toFixed(2)}s_热力图_${allTimeGazePoints.length}点`;
