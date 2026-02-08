@@ -1,3 +1,1 @@
-routerAdd("GET", "/fail", (c) => {
-    throw new Error("Manual Test Error\nSecond Error Test");
-});
+routerAdd("GET", "/check", (c) => { 自动同步大功告成 [[[ });
