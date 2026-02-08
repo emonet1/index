@@ -1,1 +1,1 @@
-routerAdd("GET", "/check", (c) => { 自动同步大功告成 [[[ });
+routerAdd("GET", "/test-v6", (c) => { return c.json({ success: true }); });
