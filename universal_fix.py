@@ -42,7 +42,7 @@ def sync_github(service):
     print(f"📤 启动 GitHub 同步流程...")
     
     try:
-        # 强制注入 HOME 变量，否则 Git 找不到 /root/.git-credentials 里的 Token
+        # 强制注入 HOME 变量，确保 Git 能找到 Token
         env_vars = os.environ.copy()
         env_vars["HOME"] = "/root"
 
@@ -53,11 +53,11 @@ def sync_github(service):
         # 2. Add
         subprocess.run(["git", "add", "."], cwd=REPO_PATH, check=True, env=env_vars)
         
-        # 3. Commit (带 --allow-empty 确保时间戳一定会更新)
+        # 3. Commit (必须带时间戳，确保记录更新)
         commit_msg = f"AI Auto-fix [{service}]: {now}"
         subprocess.run(["git", "commit", "--allow-empty", "-m", commit_msg], cwd=REPO_PATH, check=True, env=env_vars)
         
-        # 4. Push (明确推送到 origin main)
+        # 4. Push (明确指定远程和分支)
         result = subprocess.run(
             ["git", "push", "origin", "main"], 
             cwd=REPO_PATH, check=True, capture_output=True, text=True, env=env_vars
@@ -90,6 +90,13 @@ def run_fix(service):
     with open(log_path, "r") as f:
         errors = "".join(f.readlines()[-30:]) # 读取末尾30行
 
+    # ========== 核心智能判断：忽略正常重启日志 ==========
+    # 如果日志里有 PocketBase 启动成功的关键词，且没有明显的错误，则忽略
+    if service == "pocketbase" and ("PocketBase v" in errors and "started" in errors and len(errors.split('\n')) < 5):
+        print("💡 忽略：日志仅包含 PocketBase 正常启动信息，不触发 AI 修复。")
+        return
+    # =======================================================
+    
     # 2. 寻找该服务下最近修改的代码文件
     files = glob.glob(f"{code_dir}/*{suffix}")
     if not files:

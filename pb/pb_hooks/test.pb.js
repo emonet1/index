@@ -1,1 +1,1 @@
-routerAdd("GET", "/test-v6", (c) => { return c.json({ success: true }); });
+routerAdd("GET", "/test-success", (c) => { return "success"; });
