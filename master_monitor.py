@@ -1,28 +1,47 @@
-import time, os, subprocess
+import time
+import os
+import subprocess
+from datetime import datetime
 
-# 监控名单
-WATCH_LIST = [
-    {"name": "pocketbase", "log": "/home/pb/error.log"},
-    {"name": "ai-proxy", "log": "/home/ai-proxy/error.log"},
-    {"name": "websocket", "log": "/home/websocket-server/error.log"},
-]
+# 监控目标列表
+SERVICE_LIST = ["pocketbase", "ai-proxy", "websocket"]
 
-def get_size(p): return os.path.getsize(p) if os.path.exists(p) else 0
-
-# 初始记录
-last_sizes = {item['name']: get_size(item['log']) for item in WATCH_LIST}
-
-print("👀 超级监工正在巡逻 (PB, AI-Proxy, WebSocket)...")
-
-while True:
-    for item in WATCH_LIST:
-        current_size = get_size(item['log'])
-        # 如果日志文件变大了，说明有新报错
-        if current_size > last_sizes[item['name']]:
-            print(f"🚨 警告：检测到 {item['name']} 报错日志有更新！")
-            # 立即启动对应的医生脚本进行修复
-            subprocess.run(["python3", "/home/universal_fix.py", item['name']])
-            # 更新大小，避免重复触发
-            last_sizes[item['name']] = current_size
+def check_and_fix():
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 👀 巡逻中...")
     
-    time.sleep(5) # 每5秒巡视一圈
+    for service_name in SERVICE_LIST:
+        # 1. 针对 PocketBase 的日志监控
+        fix_triggered = False 
+        if service_name == "pocketbase":
+            log_path = "/home/pb/error.log"
+            if os.path.exists(log_path):
+                if (time.time() - os.path.getmtime(log_path)) < 10:
+                    print(f"🚨 警报: {service_name} 日志刚刚更新，疑似报错！")
+                    subprocess.run(["python3", "/home/universal_fix.py", service_name])
+                    subprocess.run(["supervisorctl", "restart", service_name])
+                    fix_triggered = True
+        
+        if fix_triggered: continue
+
+        # 2. 针对所有服务的进程状态监控
+        try:
+            res = subprocess.run(["supervisorctl", "status", service_name], capture_output=True, text=True)
+            status = res.stdout.strip()
+            # 如果状态包含服务名，但不是 RUNNING 也不是 STOPPED，就是挂了
+            if service_name in status and not any(s in status for s in ["RUNNING", "STOPPED"]):
+                print(f"🚨 警报: {service_name} 状态异常！正在修复...")
+                subprocess.run(["python3", "/home/universal_fix.py", service_name])
+                subprocess.run(["supervisorctl", "restart", service_name])
+                print(f"✅ {service_name} 修复流程已触发")
+
+        except Exception as e:
+            print(f"❌ 监控报错: {e}")
+
+if __name__ == "__main__":
+    print("===================================")
+    print("🚀 监工程序启动成功！")
+    print("===================================")
+    # 这一句是防止程序退出的关键
+    while True:
+        check_and_fix()
+        time.sleep(5)
