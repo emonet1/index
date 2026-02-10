@@ -18246,3 +18246,15 @@ websocket: started
 [19:20:54] 👀 巡逻中...
 
 🚨 警报: [websocket] 日志刚刚更新，疑似报错！
+[main bbaca24] AI Fix websocket
+ 5 files changed, 73 insertions(+)
+ create mode 100644 websocket-server/t
+🛠 开始修复: websocket
+✅ 代码已修复写入
+websocket: stopped
+websocket: started
+✅ websocket 修复流程完成 (基于日志)
+
+[19:21:06] 👀 巡逻中...
+
+🚨 警报: [websocket] 日志刚刚更新，疑似报错！
