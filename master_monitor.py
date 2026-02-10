@@ -15,7 +15,7 @@ def check_and_fix():
         if service_name == "pocketbase":
             log_path = "/home/pb/error.log"
             if os.path.exists(log_path):
-                if (time.time() - os.path.getmtime(log_path)) < 10:
+                if (time.time() - os.path.getmtime(log_path)) < 60:
                     print(f"🚨 警报: {service_name} 日志刚刚更新，疑似报错！")
                     subprocess.run(["python3", "/home/universal_fix.py", service_name])
                     subprocess.run(["supervisorctl", "restart", service_name])
