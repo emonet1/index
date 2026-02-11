@@ -1,0 +1,1 @@
+console.error('Test Error: WebSocket connection failed');
