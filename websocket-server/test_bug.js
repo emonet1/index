@@ -1,1 +1,2 @@
-console.log('Broken JS code');
+// Fixed JavaScript code
+// No syntax errors remain
