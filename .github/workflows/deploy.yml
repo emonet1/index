@@ -1,13 +1,11 @@
 name: 🚀 自动部署到服务器
 
-# 触发条件：当 PR 被关闭时
 on:
   pull_request:
     types: [closed]
 
 jobs:
   deploy:
-    # 只在 PR 合并且带有 auto-fix 标签时执行
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'auto-fix')
     runs-on: ubuntu-latest
     
@@ -16,7 +14,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0
       
       - name: 🔐 配置 SSH
         uses: webfactory/ssh-agent@v0.9.0
@@ -26,121 +23,18 @@ jobs:
       - name: 📝 添加服务器到 known_hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+          # 使用你在 Secrets 中定义的 SSH_HOST
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
       
       - name: 📦 同步代码到服务器
         run: |
-          echo "开始同步代码到服务器..."
-          
           rsync -avz --delete \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='node_modules/' \
-            --exclude='__pycache__/' \
-            --exclude='*.pyc' \
-            --exclude='.DS_Store' \
-            --progress \
-            ./ ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/home/
-          
-          echo "✅ 代码同步完成"
+            --exclude='.git/' --exclude='.github/' \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/
       
       - name: 🔄 重启服务
         run: |
-          echo "开始重启服务..."
-          
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} << 'ENDSSH'
-            # 提取服务名称（从 PR 标题）
-            SERVICE_NAME="${{ github.event.pull_request.title }}"
-            
-            # 重启所有相关服务（简化处理）
-            echo "重启 supervisor 管理的服务..."
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
             supervisorctl restart pocketbase websocket ai-proxy || true
-            
-            # 等待服务启动
-            sleep 5
-            
-            # 检查服务状态
-            echo "检查服务状态："
             supervisorctl status
-            
-            echo "✅ 服务重启完成"
           ENDSSH
-      
-      - name: 💬 在 PR 中评论
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const prNumber = context.payload.pull_request.number;
-            
-            github.rest.issues.createComment({
-              issue_number: prNumber,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `🎉 **部署成功！**
-              
-              ✅ 代码已同步到服务器
-              ✅ 相关服务已重启
-              ✅ 服务运行正常
-              
-              ---
-              📅 部署时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
-              🔗 部署日志: [查看详情](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
-            });
-      
-      - name: 💬 关闭关联的 Issue
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const prBody = context.payload.pull_request.body || '';
-            const issueMatch = prBody.match(/#(\d+)/);
-            
-            if (issueMatch) {
-              const issueNumber = parseInt(issueMatch[1]);
-              
-              // 在 Issue 中评论
-              await github.rest.issues.createComment({
-                issue_number: issueNumber,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: `🎉 **修复已部署到服务器！**
-                
-                ✅ 修复 PR #${context.payload.pull_request.number} 已合并并部署
-                ✅ 服务已重启并正常运行
-                
-                此 Issue 现已自动关闭。如问题仍存在，请重新打开。`
-              });
-              
-              // 关闭 Issue
-              await github.rest.issues.update({
-                issue_number: issueNumber,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: 'closed'
-              });
-            }
-      
-      - name: ❌ 部署失败通知
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const prNumber = context.payload.pull_request.number;
-            
-            github.rest.issues.createComment({
-              issue_number: prNumber,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `❌ **部署失败！**
-              
-              请查看 [部署日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) 了解详情。
-              
-              可能的原因：
-              - SSH 连接失败
-              - 文件同步错误
-              - 服务重启失败
-              
-              请手动检查服务器状态。`
-            });
