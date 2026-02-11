@@ -29455,3 +29455,14 @@ websocket: started
 [12:11:24] 👀 巡逻中...
 
 🚨 警报: [websocket] 日志刚刚更新，疑似报错！
+[main 3d5b3f6] AI Fix websocket
+ 3 files changed, 14 insertions(+)
+🛠 开始修复: websocket
+✅ 代码已修复写入
+websocket: stopped
+websocket: started
+✅ websocket 修复流程完成 (基于日志)
+
+[12:11:36] 👀 巡逻中...
+
+🚨 警报: [websocket] 日志刚刚更新，疑似报错！
