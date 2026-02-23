@@ -1,0 +1,1 @@
+console.error('Test Error: WebSocket connection failed\n  at Socket.connect (/app/main.js:123:45)\n[ERROR] 这是一条由管理员手动触发的测试报错内容，用于测试监控系统 Mon Feb 23 10:58:35 AM CST 2026\n[ERROR] 这是一条由管理员手动触发的测试报错内容，用于测试监控系统 Mon Feb 23 11:11:04 AM CST 2026');
