@@ -1,0 +1,1 @@
+console.error('Test Error: WebSocket connection failed\n  at Socket.connect (/app/main.js:123:45)');
