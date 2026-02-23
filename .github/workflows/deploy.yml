@@ -1,118 +1,40 @@
-name: 🤖 AI 自动修复
+name: 🚀 自动部署到服务器
 
-# 触发条件：当创建或重新打开 Issue 时
 on:
-  issues:
-    types: [opened, reopened]
+  pull_request:
+    types: [closed]
 
 jobs:
-  ai-fix:
-    # 只处理带有 auto-fix 标签的 Issue
-    if: contains(github.event.issue.labels.*.name, 'auto-fix')
+  deploy:
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'auto-fix')
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
     
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+          ref: main
       
-      - name: 🐍 设置 Python 环境
-        uses: actions/setup-python@v5
+      - name: 🔐 配置 SSH
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          python-version: '3.11'
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
       
-      - name: 📦 安装 Python 依赖
+      - name: 📝 添加服务器到 known_hosts
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
+          mkdir -p ~/.ssh
+          # 使用你在 Secrets 中定义的 SSH_HOST
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
       
-      - name: 🤖 AI 分析并生成修复代码
-        id: ai-fix
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AI_API_KEY: ${{ secrets.AI_API_KEY }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
+      - name: 📦 同步代码到服务器
         run: |
-          python .github/scripts/ai_fix.py
+          rsync -avz --delete \
+            --exclude='.git/' --exclude='.github/' \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/
       
-      - name: 📝 创建 Pull Request
-        id: create-pr
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🤖 AI 自动修复: Issue #${{ github.event.issue.number }}"
-          branch: "auto-fix/issue-${{ github.event.issue.number }}"
-          delete-branch: true
-          title: "🤖 [AI-FIX] 修复 Issue #${{ github.event.issue.number }}"
-          body: |
-            ## 🤖 AI 自动修复报告
-            
-            此 PR 由 AI 自动生成，用于修复 #${{ github.event.issue.number }}
-            
-            ### 📋 修复内容
-            - ✅ 已分析错误日志
-            - ✅ AI 已生成修复代码
-            - ✅ 代码已通过基础检查
-            
-            ### ⚠️ 注意事项
-            - 请仔细审查修复代码
-            - 确认无误后再合并
-            - 合并后将自动部署到服务器
-            
-            ### 🔗 相关 Issue
-            Closes #${{ github.event.issue.number }}
-            
-            ---
-            > 🤖 此 PR 由 GitHub Actions 自动创建
-            > 🕐 创建时间: ${{ github.event.issue.created_at }}
-          labels: |
-            auto-fix
-            automated-pr
-      
-      - name: 💬 在 Issue 中评论
-        if: steps.create-pr.outputs.pull-request-number
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `✅ **AI 修复已完成！**
-              
-              🔗 修复 PR: #${{ steps.create-pr.outputs.pull-request-number }}
-              
-              请前往 PR 页面审查修复代码，确认无误后可以合并。
-              
-              合并后将自动部署到服务器并重启相关服务。`
-            })
-      
-      - name: ❌ 修复失败通知
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `❌ **AI 修复失败**
-              
-              请检查 [Actions 日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) 查看详细错误信息。
-              
-              可能的原因：
-              - AI API 调用失败
-              - 代码解析错误
-              - 权限配置问题`
-            })
+      - name: 🔄 重启服务
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
+            supervisorctl restart pocketbase websocket ai-proxy || true
+            supervisorctl status
+          ENDSSH
