@@ -65,7 +65,9 @@ wss.on('connection', (ws, req) => {
     });
   } catch (error) {
     console.error('处理WebSocket连接时出错:', error);
-    ws.close(1011, '服务器错误');
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.close(1011, '服务器错误');
+    }
   }
 });
 
@@ -99,7 +101,7 @@ app.post('/push', (req, res) => {
 
   if (socket && socket.readyState === WebSocket.OPEN) {
     try {
-      socket.send(JSON.stringify(message));
+      socket.send(JSON.stringify({ type: 'message', data: message }));
       console.log(`✅ 消息已推送给教师 ${teacherId}`);
       return res.json({ success: true, message: '推送成功' });
     } catch (e) {
