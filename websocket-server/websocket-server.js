@@ -70,7 +70,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // 启动 WebSocket 服务器
-wsServer.listen(6000, () => {
+wsServer.listen(6000, '0.0.0.0', () => {
   console.log('WebSocket服务启动，端口 6000');
   console.log('WebSocket URL: ws://localhost:6000');
 });
@@ -131,7 +131,7 @@ app.get('/online-teachers', (req, res) => {
 });
 
 // 启动推送接口服务器
-app.listen(6001, () => {
+app.listen(6001, '0.0.0.0', () => {
   console.log('推送接口启动，端口 6001');
   console.log('推送接口URL: http://localhost:6001/push');
 });
