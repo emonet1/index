@@ -16,5 +16,5 @@ wss.on('connection', (ws, req) => {
 });
 
 server.listen(8080, "0.0.0.0", () => {
-  console.log("Server is steady on 8080");
+  console.log("Server is ready on 8080");
 });
