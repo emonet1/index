@@ -47,42 +47,62 @@ def parse_issue_content(issue_body, issue_title):
     else:
         log("警告: 未能识别服务名称", "WARN")
     
-    # 2. 提取错误日志
+    # 2. 提取错误日志 - 修复正则表达式
     error_log = ""
-    error_match = re.search(
-        r'### 📋 错误日志\s*```[^\n]*\n(.*?)```',
-        issue_body,
-        re.DOTALL
-    )
-    if error_match:
-        error_log = error_match.group(1).strip()
-        log(f"提取到错误日志: {len(error_log)} 字符")
-    else:
-        log("警告: 未找到错误日志", "WARN")
+    # ✅ 修复：支持标题后的可选文本（如"已脱敏"），支持标题和代码块之间的换行
+    error_patterns = [
+        r'### 📋 错误日志[^\n]*\n```[^\n]*\n(.*?)```',  # 新格式：标题后有文本+换行
+        r'### 📋 错误日志\s*```[^\n]*\n(.*?)```',      # 旧格式：标题后直接代码块
+        r'错误日志.*?```[^\n]*\n(.*?)```',              # 备用：更宽松的匹配
+    ]
     
-    # 3. 提取代码文件
+    for pattern in error_patterns:
+        error_match = re.search(pattern, issue_body, re.DOTALL)
+        if error_match:
+            error_log = error_match.group(1).strip()
+            log(f"✅ 提取到错误日志: {len(error_log)} 字符")
+            break
+    
+    if not error_log:
+        log("警告: 未找到错误日志", "WARN")
+        # 调试：打印 Issue body 的前500字符
+        log(f"Issue body 预览: {issue_body[:500]}", "DEBUG")
+    
+    # 3. 提取代码文件 - 修复正则表达式
     code_files = {}
-    file_pattern = r'#### `([^`]+)`\s*```(\w+)\s*(.*?)```'
+    # ✅ 修复：更宽松的匹配，支持多行和空格
+    file_pattern = r'#### `([^`]+)`\s*```(\w+)\s*\n(.*?)\n```'
     
     for match in re.finditer(file_pattern, issue_body, re.DOTALL):
-        file_path = match.group(1)
-        language = match.group(2)
+        file_path = match.group(1).strip()
+        language = match.group(2).strip()
         code = match.group(3).strip()
         
-        code_files[file_path] = {
-            "language": language,
-            "code": code
-        }
-        log(f"提取到文件: {file_path} ({len(code)} 字符)")
+        # 过滤掉截断的代码
+        if "代码截断" not in code and len(code) > 10:
+            code_files[file_path] = {
+                "language": language,
+                "code": code
+            }
+            log(f"✅ 提取到文件: {file_path} ({len(code)} 字符)")
+        else:
+            log(f"⚠️  跳过文件（代码不完整）: {file_path}", "WARN")
     
     if not code_files:
         log("警告: 未找到代码文件", "WARN")
+        # 调试：查找所有代码块
+        all_code_blocks = re.findall(r'```(\w+)\s*\n(.*?)\n```', issue_body, re.DOTALL)
+        log(f"找到 {len(all_code_blocks)} 个代码块", "DEBUG")
     
     return service_name, error_log, code_files
 
 
 def call_ai_api(prompt, max_retries=3):
     """调用通义千问 API"""
+    
+    if not AI_API_KEY:
+        log("❌ AI_API_KEY 未设置", "ERROR")
+        return None
     
     headers = {
         "Authorization": f"Bearer {AI_API_KEY}",
@@ -130,8 +150,11 @@ def call_ai_api(prompt, max_retries=3):
             log(f"请求超时 (尝试 {attempt + 1}/{max_retries})", "WARN")
         except requests.exceptions.RequestException as e:
             log(f"请求失败: {e}", "ERROR")
-            if hasattr(e.response, 'text'):
-                log(f"响应内容: {e.response.text}", "ERROR")
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    log(f"响应内容: {e.response.text[:200]}", "ERROR")
+                except:
+                    pass
         except Exception as e:
             log(f"未知错误: {e}", "ERROR")
         
@@ -165,120 +188,3 @@ def fix_code_file(file_path, original_code, error_log, language):
 修复以下代码中的错误。
 
 ## 错误日志
-```
-{error_log}
-```
-
-## 文件路径
-{file_path}
-
-## 原始代码
-```{language}
-{original_code}
-```
-
-## 要求
-1. 仔细分析错误日志，定位问题根源
-2. 修复所有语法错误和逻辑错误
-3. 保持原有代码结构和注释
-4. 确保修复后的代码可以正常运行
-5. **只返回修复后的完整代码，不要包含任何解释、注释或markdown标记**
-
-## 输出
-直接输出修复后的代码："""
-
-    # 调用 AI
-    fixed_code = call_ai_api(prompt)
-    
-    if not fixed_code:
-        log(f"❌ AI 修复失败: {file_path}", "ERROR")
-        return None
-    
-    # 清理 AI 返回内容
-    fixed_code = clean_ai_response(fixed_code)
-    
-    log(f"✅ 修复完成: {file_path} ({len(fixed_code)} 字符)")
-    return fixed_code
-
-
-def write_fixed_files(service_name, code_files_fixed):
-    """将修复后的代码写入文件"""
-    
-    log("开始写入修复后的文件...")
-    
-    # 确定服务目录
-    service_dir = SERVICE_DIRS.get(service_name, service_name)
-    
-    for file_path, fixed_code in code_files_fixed.items():
-        # 构建完整路径
-        full_path = os.path.join(service_dir, file_path)
-        
-        # 创建目录
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        
-        # 写入文件
-        try:
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.write(fixed_code)
-            log(f"✅ 已写入: {full_path}")
-        except Exception as e:
-            log(f"❌ 写入失败 {full_path}: {e}", "ERROR")
-
-
-def main():
-    """主函数"""
-    
-    log("=" * 60)
-    log("🤖 AI 自动修复流程开始")
-    log("=" * 60)
-    
-    # 检查必要的环境变量
-    if not AI_API_KEY:
-        log("❌ 缺少 AI_API_KEY 环境变量", "ERROR")
-        sys.exit(1)
-    
-    if not ISSUE_NUMBER:
-        log("❌ 缺少 ISSUE_NUMBER 环境变量", "ERROR")
-        sys.exit(1)
-    
-    # 解析 Issue 内容
-    service_name, error_log, code_files = parse_issue_content(ISSUE_BODY, ISSUE_TITLE)
-    
-    if not error_log:
-        log("❌ 未找到错误日志，无法修复", "ERROR")
-        sys.exit(1)
-    
-    if not code_files:
-        log("❌ 未找到代码文件，无法修复", "ERROR")
-        sys.exit(1)
-    
-    log(f"📊 统计: 服务={service_name}, 错误日志={len(error_log)}字符, 文件数={len(code_files)}")
-    
-    # 逐个修复代码文件
-    code_files_fixed = {}
-    
-    for file_path, file_info in code_files.items():
-        original_code = file_info["code"]
-        language = file_info["language"]
-        
-        fixed_code = fix_code_file(file_path, original_code, error_log, language)
-        
-        if fixed_code:
-            code_files_fixed[file_path] = fixed_code
-        else:
-            log(f"⚠️  跳过文件（修复失败）: {file_path}", "WARN")
-    
-    if not code_files_fixed:
-        log("❌ 所有文件修复失败", "ERROR")
-        sys.exit(1)
-    
-    # 写入修复后的文件
-    write_fixed_files(service_name, code_files_fixed)
-    
-    log("=" * 60)
-    log(f"✅ AI 修复流程完成！共修复 {len(code_files_fixed)} 个文件")
-    log("=" * 60)
-
-
-if __name__ == "__main__":
-    main()
