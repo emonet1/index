@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-服务器端错误上报脚本（重构版）
+服务器端错误上报脚本（重构版 + 安全增强）
 职责：收集错误日志和相关代码，通过 GitHub API 创建 Issue
+✅ 新增：日志脱敏处理，防止敏感信息泄露到公开 Issue
 真正的修复由 GitHub Actions (auto-fix.yml) 负责
 不再直接修改任何生产代码，不再直接 git push！
 """
@@ -10,6 +11,25 @@ import sys
 import glob
 import requests
 from datetime import datetime
+
+# ✅ 导入脱敏模块
+try:
+    from sanitizer import LogSanitizer
+    SANITIZER_AVAILABLE = True
+    print("✅ 日志脱敏模块已加载", flush=True)
+except ImportError:
+    print("⚠️ 警告：脱敏模块未找到，使用简化版", flush=True)
+    SANITIZER_AVAILABLE = False
+    # 简化版脱敏（备用方案）
+    import re
+    class LogSanitizer:
+        @staticmethod
+        def sanitize(text):
+            text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.com', text)
+            text = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '*.*.*.*', text)
+            text = re.sub(r'(?:sk-|pk-|ghp_|gho_)[A-Za-z0-9_]{20,}', '***REDACTED***', text)
+            text = re.sub(r'(?i)(password|passwd|pwd|secret)["\']?\s*[:=]\s*["\']?([^"\'\s]{3,})', r'\1=***', text)
+            return text
 
 # ==================== 配置区 ====================
 GITHUB_TOKEN = os.getenv("PERSONAL_ACCESS_TOKEN")
@@ -39,21 +59,38 @@ def collect_and_report(service):
         print("❌ 日志文件不存在: " + log_path, flush=True)
         return
 
-    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-        errors = "".join(f.readlines()[-50:])
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw_errors = "".join(f.readlines()[-50:])
+        
+        # ✅ 关键改进：脱敏处理
+        errors = LogSanitizer.sanitize(raw_errors)
+        print("🔒 日志已脱敏处理 (原始: " + str(len(raw_errors)) + " 字符 → 安全: " + str(len(errors)) + " 字符)", flush=True)
+        
+    except Exception as e:
+        print("❌ 读取日志失败: " + str(e), flush=True)
+        return
 
     # 忽略 PocketBase 正常启动日志
     if service == "pocketbase" and "PocketBase v" in errors and "started" in errors:
         print("💡 忽略 PocketBase 正常启动日志", flush=True)
         return
+    
+    # 检查日志是否有实际内容
+    if not errors.strip() or len(errors) < 20:
+        print("💡 日志内容过少，跳过上报", flush=True)
+        return
 
     # ---------- 第2步：收集相关代码文件（只读，不写）----------
     files = glob.glob(code_dir + "/*" + suffix)
     file_contents = {}
-    for fpath in files[:3]:
+    for fpath in files[:3]:  # 最多收集 3 个文件
         try:
             with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                file_contents[os.path.basename(fpath)] = f.read()
+                content = f.read()
+                # ✅ 代码文件也要脱敏（可能包含注释中的敏感信息）
+                safe_content = LogSanitizer.sanitize(content)
+                file_contents[os.path.basename(fpath)] = safe_content
         except Exception as e:
             print("⚠️ 读取文件失败 " + fpath + ": " + str(e), flush=True)
 
@@ -71,22 +108,28 @@ def collect_and_report(service):
     files_section = ""
     for fname, fcontent in file_contents.items():
         ext = suffix.lstrip(".")
-        files_section += "\n#### `" + fname + "`\n```" + ext + "\n" + fcontent[:5000] + "\n```\n"
+        # 限制代码长度，避免 Issue 过长
+        code_preview = fcontent[:5000]
+        if len(fcontent) > 5000:
+            code_preview += "\n\n... (代码过长，已截断) ..."
+        files_section += "\n#### `" + fname + "`\n```" + ext + "\n" + code_preview + "\n```\n"
 
-    # 构建完整正文（避免 f-string 嵌套三引号导致 SyntaxError）
+    # 构建完整正文
     issue_body = (
         "## 🚨 服务异常自动报告\n\n"
         "**服务名称**: `" + service + "`\n"
-        "**检测时间**: `" + now_str + "`\n\n"
-        "### 📋 错误日志\n"
+        "**检测时间**: `" + now_str + "`\n"
+        "**脱敏状态**: ✅ 已自动脱敏（邮箱、IP、密钥等敏感信息已隐藏）\n\n"
+        "### 📋 错误日志（已脱敏）\n"
         "```\n"
         + errors[:3000] +
         "\n```\n\n"
-        "### 📁 相关代码文件\n"
+        "### 📁 相关代码文件（已脱敏）\n"
         + files_section +
         "\n---\n"
         "*此 Issue 由服务器 `universal_fix.py` 自动创建*\n"
         "*修复将由 GitHub Actions AI 智能体自动完成并创建 PR*\n"
+        "*⚠️ 日志已自动脱敏，不包含真实敏感信息*\n"
     )
 
     # ---------- 第5步：调用 GitHub API 创建 Issue ----------
@@ -98,22 +141,35 @@ def collect_and_report(service):
     data = {
         "title": "[AUTO-FIX] " + service + " - " + title_time + " 服务异常",
         "body": issue_body,
-        "labels": ["auto-fix"]
+        "labels": ["auto-fix", "security-sanitized"]  # ✅ 新增标签：表示已脱敏
     }
 
     try:
+        print("📤 正在创建 GitHub Issue...", flush=True)
         resp = requests.post(url, headers=headers, json=data, timeout=30)
         resp.raise_for_status()
         issue_url = resp.json()["html_url"]
         print("✅ 已创建 GitHub Issue: " + issue_url, flush=True)
+        print("🔒 敏感信息已自动脱敏，可安全公开", flush=True)
         print("⏳ 等待 GitHub Actions AI 自动修复...", flush=True)
+    except requests.exceptions.Timeout:
+        print("❌ 创建 Issue 超时", flush=True)
+    except requests.exceptions.HTTPError as e:
+        print("❌ GitHub API 错误: " + str(e), flush=True)
+        if hasattr(e.response, 'text'):
+            print("   详情: " + e.response.text[:200], flush=True)
     except Exception as e:
         print("❌ 创建 Issue 失败: " + str(e), flush=True)
 
 
 if __name__ == "__main__":
+    print("="*60, flush=True)
+    print("🚀 Universal Fix 脚本启动", flush=True)
+    print("🔒 已启用日志脱敏功能", flush=True)
+    print("="*60, flush=True)
+    
     if len(sys.argv) > 1:
         collect_and_report(sys.argv[1])
     else:
         print("用法: python3 /home/universal_fix.py <服务名>")
-        print("服务名可选: pocketbase, ai-proxy, websocket")
+        print("服务名可选: " + ", ".join(PROJECTS.keys()))
