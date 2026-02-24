@@ -1,13 +1,11 @@
 name: 🚀 自动部署到服务器
 
 on:
-  # ⭐ 改用 pull_request_target，确保 PAT 创建的 PR 合并时也能触发
   pull_request_target:
     types: [closed]
 
 jobs:
   deploy:
-    # PR 必须是合并关闭（不是手动关闭），且带有 auto-fix 标签
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'auto-fix')
     runs-on: ubuntu-latest
 
@@ -31,7 +29,7 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-      - name: 📦 同步代码到服务器
+      - name: 📦 同步代码到服务器（仅代码，不碰数据）
         run: |
           rsync -avz \
             --exclude='.git/' \
@@ -39,6 +37,10 @@ jobs:
             --exclude='*.log' \
             --exclude='monitor_*.log' \
             --exclude='pocketbase' \
+            --exclude='pb/pb_data/' \
+            --exclude='pb/pb_migrations/' \
+            --exclude='pb/*.log' \
+            --exclude='ubuntu/' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/
 
       - name: 🔄 重启服务
