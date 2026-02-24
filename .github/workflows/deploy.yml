@@ -1,40 +1,57 @@
 name: 🚀 自动部署到服务器
 
 on:
-  pull_request:
+  # ⭐ 改用 pull_request_target，确保 PAT 创建的 PR 合并时也能触发
+  pull_request_target:
     types: [closed]
 
 jobs:
   deploy:
+    # PR 必须是合并关闭（不是手动关闭），且带有 auto-fix 标签
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'auto-fix')
     runs-on: ubuntu-latest
-    
+
+    permissions:
+      contents: read
+
     steps:
-      - name: 📥 检出代码
+      - name: 📥 检出代码（检出合并后的 main 分支）
         uses: actions/checkout@v4
         with:
           ref: main
-      
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
       - name: 🔐 配置 SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-      
+
       - name: 📝 添加服务器到 known_hosts
         run: |
           mkdir -p ~/.ssh
-          # 使用你在 Secrets 中定义的 SSH_HOST
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-      
+
       - name: 📦 同步代码到服务器
         run: |
-          rsync -avz --delete \
-            --exclude='.git/' --exclude='.github/' \
+          rsync -avz \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='*.log' \
+            --exclude='monitor_*.log' \
+            --exclude='pocketbase' \
             ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/
-      
+
       - name: 🔄 重启服务
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
             supervisorctl restart pocketbase websocket ai-proxy || true
             supervisorctl status
           ENDSSH
+
+      - name: ✅ 部署成功通知
+        if: success()
+        run: echo "🎉 部署成功！"
+
+      - name: ❌ 部署失败通知
+        if: failure()
+        run: echo "💥 部署失败，请检查日志！"
