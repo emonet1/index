@@ -27,9 +27,20 @@ except ImportError:
         def sanitize(text):
             text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.com', text)
             text = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '*.*.*.*', text)
-            text = re.sub(r'(?:sk-|pk-|ghp_|gho_)[A-Za-z0-9_]{20,}', '***REDACTED***', text)
+            text = re.sub(r'(?:sk-|pk-|ghp_|gho_)[A-Za-z0-9_-]{20,}', '***REDACTED***', text)
             text = re.sub(r'(?i)(password|passwd|pwd|secret)["\']?\s*[:=]\s*["\']?([^"\'\s]{3,})', r'\1=***', text)
             return text
+        
+        @staticmethod
+        def validate(text):
+            """简化版验证"""
+            import re
+            issues = []
+            if re.search(r'sk-[a-zA-Z0-9]{20,}', text):
+                issues.append("API密钥")
+            if re.search(r'ghp_[a-zA-Z0-9]{36}', text):
+                issues.append("GitHub Token")
+            return issues
 
 # ==================== 配置区 ====================
 GITHUB_TOKEN = os.getenv("PERSONAL_ACCESS_TOKEN")
@@ -131,6 +142,18 @@ def collect_and_report(service):
         "*修复将由 GitHub Actions AI 智能体自动完成并创建 PR*\n"
         "*⚠️ 日志已自动脱敏，不包含真实敏感信息*\n"
     )
+    
+    # ✅ 关键改进: 对整个 Issue body 再次脱敏
+    issue_body = LogSanitizer.sanitize(issue_body)
+    
+    # ✅ 新增: 二次验证是否还有敏感信息
+    validation_issues = LogSanitizer.validate(issue_body)
+    if validation_issues:
+        print("❌ 检测到可能的敏感信息泄漏，终止上报！", flush=True)
+        for issue in validation_issues:
+            print(f"  - {issue}", flush=True)
+        print("💡 建议: 检查 sanitizer.py 的脱敏规则", flush=True)
+        return
 
     # ---------- 第5步：调用 GitHub API 创建 Issue ----------
     url = "https://api.github.com/repos/" + REPO + "/issues"
@@ -141,7 +164,7 @@ def collect_and_report(service):
     data = {
         "title": "[AUTO-FIX] " + service + " - " + title_time + " 服务异常",
         "body": issue_body,
-        "labels": ["auto-fix", "security-sanitized"]  # ✅ 新增标签：表示已脱敏
+        "labels": ["auto-fix", "security-sanitized"]
     }
 
     try:
