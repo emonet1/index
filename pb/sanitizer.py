@@ -18,6 +18,9 @@ class LogSanitizer:
     @classmethod
     def sanitize(cls, log_text):
         """对日志进行脱敏处理"""
+        if not log_text:
+            return log_text
+            
         sanitized = log_text
         
         # 脱敏邮箱
@@ -92,5 +95,28 @@ class LogSanitizer:
     @staticmethod
     def _mask_ip(ip):
         """IP 地址脱敏：只保留前两段"""
-        parts = ip.split('.')
-        return f"{parts[0]}.{parts[1]}.*.*"
+        try:
+            parts = ip.split('.')
+            if len(parts) == 4:
+                return f"{parts[0]}.{parts[1]}.*.*"
+            return "***.*.*.*"
+        except:
+            return "***.*.*.*"
+
+
+# 测试代码（可选）
+if __name__ == "__main__":
+    test_log = """
+    [ERROR] User login failed: email=ErnstGabona148@gmail.com, ip=192.168.1.100
+    [ERROR] API Key: sk-86c77a39ce87413f8502d80e02408779
+    [ERROR] Password: password="mySecretPass123"
+    [ERROR] Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV
+    [ERROR] File path: /home/pb/pb_hooks/test.js
+    [ERROR] Phone: 13812345678
+    """
+    
+    print("原始日志:")
+    print(test_log)
+    print("\n" + "="*50)
+    print("脱敏后:")
+    print(LogSanitizer.sanitize(test_log))
