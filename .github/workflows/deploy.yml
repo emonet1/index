@@ -1,59 +1,45 @@
 name: 🚀 自动部署到服务器
 
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
+    branches:
+      - main
 
 jobs:
   deploy:
-    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'auto-fix')
+    # 只有当 PR 合并且包含 'auto-fix' 标签，或人工合并时触发
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
-
     steps:
-      - name: 📥 检出代码（检出合并后的 main 分支）
+      - name: 📥 检出代码
         uses: actions/checkout@v4
-        with:
-          ref: main
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: 🔐 配置 SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: 📝 添加服务器到 known_hosts
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-
-      - name: 📦 同步代码到服务器（仅代码，不碰数据）
-        run: |
-          rsync -avz \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='*.log' \
-            --exclude='monitor_*.log' \
-            --exclude='pocketbase' \
-            --exclude='pb/pb_data/' \
-            --exclude='pb/pb_migrations/' \
-            --exclude='pb/*.log' \
-            --exclude='ubuntu/' \
-            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/
+      - name: 📦 同步代码到服务器
+        uses: easingthemes/ssh-deploy@v5.1.0
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          ARGS: "-avz --delete --exclude='.git/' --exclude='.github/' --exclude='*.log' --exclude='monitor_*.log' --exclude='.env' --exclude='pb/pb_data/' --exclude='pb/pb_migrations/' --exclude='pb/logs/'"
+          SOURCE: "./"
+          REMOTE_HOST: ${{ secrets.SSH_HOST }}
+          REMOTE_USER: ${{ secrets.SSH_USER }}
+          TARGET: "/home/"
+          # 解释：
+          # --exclude='pb/pb_data/'       : 绝对保护 SQLite 数据库不被覆盖
+          # --exclude='pb/pb_migrations/' : 保护服务器端生成的迁移文件
+          # --exclude='.env'              : 保护服务器环境变量配置
+          # --exclude='*.log'             : 不覆盖或删除服务器日志
 
       - name: 🔄 重启服务
-        run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
-            supervisorctl restart pocketbase websocket ai-proxy || true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "🚀 代码已部署，正在重启服务..."
+            # 尝试重启所有相关服务
+            supervisorctl restart pocketbase ai-proxy websocket || true
             supervisorctl status
-          ENDSSH
-
-      - name: ✅ 部署成功通知
-        if: success()
-        run: echo "🎉 部署成功！"
-
-      - name: ❌ 部署失败通知
-        if: failure()
-        run: echo "💥 部署失败，请检查日志！"
+            echo "✅ 服务重启完成"
