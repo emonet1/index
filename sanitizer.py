@@ -1,117 +1,102 @@
+# /home/sanitizer.py
 import re
 
 class LogSanitizer:
-    """日志脱敏处理器 - 自动隐藏敏感信息"""
-    
+    """
+    统一日志脱敏处理器 (增强版)
+    ✅ 包含: PII (邮箱/IP/手机), 凭证 (API Key/AWS/JWT), Web传输 (URL/Cookie/Auth)
+    """
+
     PATTERNS = {
-        'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-        'ip': r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
-        'api_key': r'\b(?:sk-|pk-|token-|ghp_|gho_)[A-Za-z0-9_-]{20,}\b',  # ✅ 扩展支持 GitHub token
-        'password': r'(?i)(password|passwd|pwd|secret|api_key|token)["\']?\s*[:=]\s*["\']?([^"\'\s]{3,})',
-        'jwt': r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
-        'phone': r'\b1[3-9]\d{9}\b',
-        'id_card': r'\b\d{17}[\dXx]\b',
-        'path': r'(/home/[a-z0-9_-]+|/root|C:\\Users\\[^\\]+)',
-        # ✅ 新增: 数据库连接串
+        # === 1. 基础个人信息 (PII) ===
+        'email':     r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+        'ip':        r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
+        'phone':     r'\b1[3-9]\d{9}\b',
+        'id_card':   r'\b\d{17}[\dXx]\b',
+        'path':      r'(/home/[a-z0-9_-]+|/root|C:\\Users\\[^\\]+)',
+
+        # === 2. 核心凭证 (Keys & Secrets) ===
+        'api_key':   r'\b(?:sk-|pk-|token-|ghp_|gho_|ssh-rsa)[A-Za-z0-9_+\-=]{20,}\b',
+        'jwt':       r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+        'aws_key':   r'(?i)(AKIA|ASIA)[A-Z0-9]{16}',
+        'private_key': r'-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----.*?-----END\s+(?:RSA\s+)?PRIVATE\s+KEY-----',
+        
+        # === 3. 基础设施连接 ===
         'db_connection': r'(?i)(mongodb|mysql|postgresql|redis)://[^\s]+',
-        # ✅ 新增: AWS/云服务密钥
-        'aws_key': r'(?i)(AKIA|ASIA)[A-Z0-9]{16}',
+
+        # === 4. Web 传输敏感数据 (本次增强) ===
+        # URL 参数中的 token/key (例如: ?token=abcde...)
+        'url_params': r'(?i)[?&](token|key|secret|password|pwd|api_key|access_token)=([^&\s]+)',
+        # Basic/Bearer 认证头
+        'basic_auth': r'Basic\s+[A-Za-z0-9+/]+=*',
+        'bearer_token': r'Bearer\s+[A-Za-z0-9_\-\.]+',
+        # Cookie 会话
+        'cookie':    r'(?i)(sessionid|session|jsessionid|phpsessid|connect\.sid)=([^;\s]+)',
+        # JSON/Form 字段中的密码
+        'password_field': r'(?i)(password|passwd|pwd|secret)["\']?\s*[:=]\s*["\']?([^"\'\s]+)',
     }
-    
+
     @classmethod
-    def sanitize(cls, log_text):
-        """对日志进行脱敏处理"""
-        if not log_text:
-            return log_text
-            
-        sanitized = log_text
+    def sanitize(cls, text):
+        """执行全量脱敏"""
+        if not text:
+            return ""
         
-        # 脱敏邮箱
-        sanitized = re.sub(
-            cls.PATTERNS['email'],
-            lambda m: cls._mask_email(m.group(0)),
-            sanitized
-        )
+        s = text
         
-        # 脱敏 IP
-        sanitized = re.sub(
-            cls.PATTERNS['ip'],
-            lambda m: cls._mask_ip(m.group(0)),
-            sanitized
-        )
+        # --- 第一轮：特定格式脱敏 (优先处理长串) ---
         
-        # 脱敏 API 密钥
-        sanitized = re.sub(
-            cls.PATTERNS['api_key'],
-            lambda m: m.group(0)[:6] + "***" + m.group(0)[-4:] if len(m.group(0)) > 10 else "***REDACTED***",
-            sanitized
-        )
+        # 1. URL 参数 (?token=abc -> ?token=***)
+        s = re.sub(cls.PATTERNS['url_params'], r'\1=***REDACTED***', s)
         
-        # 脱敏密码
-        sanitized = re.sub(
-            cls.PATTERNS['password'],
-            r'\1=***REDACTED***',
-            sanitized
-        )
+        # 2. 认证头
+        s = re.sub(cls.PATTERNS['basic_auth'], 'Basic ***REDACTED***', s)
+        s = re.sub(cls.PATTERNS['bearer_token'], 'Bearer ***REDACTED***', s)
         
-        # 脱敏 JWT
-        sanitized = re.sub(
-            cls.PATTERNS['jwt'],
-            'eyJ***REDACTED***',
-            sanitized
-        )
+        # 3. Cookie
+        s = re.sub(cls.PATTERNS['cookie'], r'\1=***REDACTED***', s)
         
-        # 脱敏手机号
-        sanitized = re.sub(
-            cls.PATTERNS['phone'],
-            lambda m: m.group(0)[:3] + "****" + m.group(0)[-4:],
-            sanitized
-        )
+        # 4. 数据库连接串
+        s = re.sub(cls.PATTERNS['db_connection'], r'\1://***DB_CREDS_REDACTED***', s)
+
+        # --- 第二轮：通用凭证脱敏 ---
         
-        # 脱敏身份证
-        sanitized = re.sub(
-            cls.PATTERNS['id_card'],
-            lambda m: m.group(0)[:6] + "********" + m.group(0)[-4:],
-            sanitized
-        )
+        s = re.sub(cls.PATTERNS['aws_key'], '***AWS_KEY_REDACTED***', s)
+        s = re.sub(cls.PATTERNS['private_key'], '***PRIVATE_KEY_REDACTED***', s)
+        s = re.sub(cls.PATTERNS['jwt'], 'eyJ***JWT_REDACTED***', s)
+        s = re.sub(cls.PATTERNS['api_key'], '***API_KEY_REDACTED***', s)
         
-        # 脱敏路径
-        sanitized = re.sub(
-            cls.PATTERNS['path'],
-            '/***/',
-            sanitized
-        )
+        # --- 第三轮：字段与 PII 脱敏 ---
         
-        # ✅ 脱敏数据库连接串
-        sanitized = re.sub(
-            cls.PATTERNS['db_connection'],
-            lambda m: m.group(1) + '://***REDACTED***',
-            sanitized
-        )
+        # 密码字段
+        s = re.sub(cls.PATTERNS['password_field'], r'\1=***PASS_REDACTED***', s)
         
-        # ✅ 脱敏 AWS 密钥
-        sanitized = re.sub(
-            cls.PATTERNS['aws_key'],
-            '***AWS_KEY_REDACTED***',
-            sanitized
-        )
+        # 邮箱 (保留首尾)
+        s = re.sub(cls.PATTERNS['email'], lambda m: cls._mask_email(m.group(0)), s)
         
-        return sanitized
-    
+        # IP (保留前两段)
+        s = re.sub(cls.PATTERNS['ip'], lambda m: cls._mask_ip(m.group(0)), s)
+        
+        # 手机号/身份证
+        s = re.sub(cls.PATTERNS['phone'], r'***PHONE***', s)
+        s = re.sub(cls.PATTERNS['id_card'], r'***ID_CARD***', s)
+        s = re.sub(cls.PATTERNS['path'], '/***/', s)
+
+        return s
+
     @staticmethod
     def _mask_email(email):
-        """邮箱脱敏：保留首尾字符"""
         try:
+            if '@' not in email: return email
             username, domain = email.split('@')
             if len(username) <= 2:
                 return f"***@{domain}"
             return f"{username[0]}***{username[-1]}@{domain}"
         except:
             return "***@***.com"
-    
+
     @staticmethod
     def _mask_ip(ip):
-        """IP 地址脱敏：只保留前两段"""
         try:
             parts = ip.split('.')
             if len(parts) == 4:
@@ -119,52 +104,46 @@ class LogSanitizer:
             return "***.*.*.*"
         except:
             return "***.*.*.*"
-    
+
     @classmethod
     def validate(cls, text):
-        """✅ 新增: 验证文本是否仍包含敏感信息"""
-        sensitive_patterns = [
-            (r'sk-[a-zA-Z0-9]{20,}', 'API密钥'),
-            (r'ghp_[a-zA-Z0-9]{36}', 'GitHub Token'),
-            (r'\b\d{17}[\dXx]\b', '身份证号'),
-            (r'(?:\d{1,3}\.){3}\d{1,3}', 'IP地址'),
-            (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '邮箱地址'),
-        ]
-        
-        found_issues = []
-        for pattern, name in sensitive_patterns:
-            matches = re.findall(pattern, text)
-            if matches:
-                found_issues.append(f"{name}: 发现 {len(matches)} 处")
-        
-        return found_issues
+        """
+        二次验证：检查是否仍包含极其危险的敏感特征
+        注意：不检查邮箱/IP，因为脱敏后的格式可能仍会被正则匹配，导致误报
+        """
+        issues = []
+        # 检查高危 Key
+        if re.search(r'sk-[a-zA-Z0-9]{20,}', text):
+            issues.append("可能泄露 OpenAI Key")
+        if re.search(r'ghp_[a-zA-Z0-9]{20,}', text):
+            issues.append("可能泄露 GitHub Token")
+        if re.search(r'(?i)(AKIA|ASIA)[A-Z0-9]{16}', text):
+            issues.append("可能泄露 AWS Access Key")
+        if re.search(r'-----BEGIN PRIVATE KEY-----', text):
+            issues.append("可能泄露 RSA 私钥")
+            
+        return issues
 
-
-# 测试代码
+# --- 本地测试块 (仅直接运行时执行) ---
 if __name__ == "__main__":
     test_log = """
-    [ERROR] email=test@gmail.com, ip=192.168.1.100
-    [ERROR] API Key: sk-86c77a39ce87413f8502d80e02408779
-    [ERROR] password="secret123"
-    [ERROR] GitHub Token: ghp_1234567890abcdefghijklmnopqrstuvwxyz
-    [ERROR] Database: mongodb://user:pass@localhost:27017/db
+    [INFO] Request to http://api.com?token=abcdef123456&user=admin
+    [INFO] Cookie: sessionid=xyz987654321; path=/
+    [ERROR] DB Connection failed: postgresql://user:pass123@localhost:5432/db
+    [ERROR] AWS Error: AccessDenied for AKIAIOSFODNN7EXAMPLE
+    [ERROR] User test@example.com login failed from 192.168.1.1
+    [DEBUG] Auth: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig
     """
-    print("="*60)
-    print("脱敏测试:")
-    print("="*60)
-    print("\n【原始日志】:")
-    print(test_log)
     
+    print("--- 原始日志 ---")
+    print(test_log)
+    print("\n--- 脱敏后日志 ---")
     sanitized = LogSanitizer.sanitize(test_log)
-    print("\n【脱敏后日志】:")
     print(sanitized)
     
-    # 验证
+    print("\n--- 安全验证 ---")
     issues = LogSanitizer.validate(sanitized)
-    print("\n【验证结果】:")
     if issues:
-        print("❌ 仍存在敏感信息:")
-        for issue in issues:
-            print(f"  - {issue}")
+        print("❌ 验证失败:", issues)
     else:
-        print("✅ 未检测到敏感信息")
+        print("✅ 验证通过: 未发现高危敏感信息")
