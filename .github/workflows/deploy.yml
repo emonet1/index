@@ -39,7 +39,47 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             echo "🚀 代码已部署，正在重启服务..."
-            # 尝试重启所有相关服务
-            supervisorctl restart pocketbase ai-proxy websocket || true
+            
+            # 检查 supervisorctl 是否可用
+            if ! command -v supervisorctl &> /dev/null; then
+              echo "⚠️ supervisorctl 未安装，跳过服务重启"
+              exit 0
+            fi
+            
+            # 单独重启每个服务，记录结果
+            RESTART_FAILED=0
+            
+            echo "重启 pocketbase..."
+            if supervisorctl restart pocketbase; then
+              echo "✅ pocketbase 重启成功"
+            else
+              echo "❌ pocketbase 重启失败"
+              RESTART_FAILED=1
+            fi
+            
+            echo "重启 ai-proxy..."
+            if supervisorctl restart ai-proxy; then
+              echo "✅ ai-proxy 重启成功"
+            else
+              echo "❌ ai-proxy 重启失败"
+              RESTART_FAILED=1
+            fi
+            
+            echo "重启 websocket..."
+            if supervisorctl restart websocket; then
+              echo "✅ websocket 重启成功"
+            else
+              echo "❌ websocket 重启失败"
+              RESTART_FAILED=1
+            fi
+            
+            echo ""
+            echo "📊 服务状态总览："
             supervisorctl status
-            echo "✅ 服务重启完成"
+            
+            if [ $RESTART_FAILED -eq 1 ]; then
+              echo "⚠️ 部分服务重启失败，请检查日志"
+              exit 1
+            fi
+            
+            echo "✅ 所有服务重启完成"
