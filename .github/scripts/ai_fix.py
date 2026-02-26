@@ -168,10 +168,19 @@ def call_ai_api(prompt, max_retries=3):
 
 
 def clean_ai_response(text):
-    """清理 AI 返回的代码"""
-    text = re.sub(r'^```\w*\n', '', text)
-    text = re.sub(r'\n```$', '', text)
+    """清理 AI 返回的代码（增强版）"""
+    # 尝试提取 markdown 代码块中的内容
+    code_block_match = re.search(r'```(?:\w+)?\s*\n(.*?)\n```', text, re.DOTALL)
+    if code_block_match:
+        text = code_block_match.group(1)
+    else:
+        # 如果没有代码块，尝试移除开头和结尾的标记
+        text = re.sub(r'^```\w*\n', '', text)
+        text = re.sub(r'\n```$', '', text)
+    
+    # 移除开头的语言标识符
     text = re.sub(r'^(javascript|python|js|py)\n', '', text, flags=re.IGNORECASE)
+    
     return text.strip()
 
 
