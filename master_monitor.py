@@ -85,17 +85,17 @@ def check_critical_state(service_name):
 def trigger_fix_process(service_name):
     now = time.time()
     
-    # 1. 检测严重故障（如果达到阈值则阻止自动修复）
-    if check_critical_state(service_name):
-        log(f"[{service_name}] 🔥 进入紧急模式：暂停自动修复，等待人工干预!", "CRITICAL")
-        return  # 阻止继续执行
-
-    # 2. 冷却期检查
+    # 1. 冷却期检查（优先级最高，避免重复处理）
     last_time = last_fix_time.get(service_name, 0)
     if (now - last_time) < COOLDOWN_SECONDS:
         remaining = int(COOLDOWN_SECONDS - (now - last_time))
         log(f"[{service_name}] 修复冷却中 (剩余 {remaining}s)，跳过上报", "WARN")
         return
+
+    # 2. 检测严重故障（只在准备上报时才检查和计数）
+    if check_critical_state(service_name):
+        log(f"[{service_name}] 🔥 进入紧急模式：暂停自动修复，等待人工干预!", "CRITICAL")
+        return  # 阻止继续执行
 
     log(f"[{service_name}] 触发自动上报流程...", "INFO")
     
