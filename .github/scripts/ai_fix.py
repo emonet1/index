@@ -175,6 +175,27 @@ def clean_ai_response(text):
     return text.strip()
 
 
+def validate_code(code, language):
+    """验证代码基本语法"""
+    # Python 语法检查
+    if language in ['python', 'py']:
+        try:
+            compile(code, '<string>', 'exec')
+            return True, "语法正确"
+        except SyntaxError as e:
+            return False, f"Python语法错误: {e}"
+    
+    # JavaScript 基本检查（括号匹配）
+    if language in ['javascript', 'js']:
+        if code.count('{') != code.count('}'):
+            return False, f"括号不匹配: {{={code.count('{')} }}={code.count('}')}"
+        if code.count('(') != code.count(')'):
+            return False, f"圆括号不匹配: (={code.count('(')} )={code.count(')')}"
+        return True, "基本检查通过"
+    
+    return True, "未验证"
+
+
 def fix_code_file(file_path, original_code, error_log, language):
     """使用 AI 修复单个代码文件"""
     
@@ -215,6 +236,14 @@ def fix_code_file(file_path, original_code, error_log, language):
     if len(fixed_code) < 10:
         log(f"❌ 修复后的代码太短: {file_path}", "ERROR")
         return None
+    
+    # 验证代码语法
+    is_valid, msg = validate_code(fixed_code, language)
+    if not is_valid:
+        log(f"❌ 代码验证失败 {file_path}: {msg}", "ERROR")
+        return None
+    else:
+        log(f"✅ 代码验证通过: {msg}")
     
     log(f"✅ 修复完成: {file_path} ({len(fixed_code)} 字符)")
     return fixed_code
@@ -289,6 +318,7 @@ def main():
     log(f"📊 统计: 服务={service_name}, 错误日志={len(error_log)}字符, 文件数={len(code_files)}")
     
     code_files_fixed = {}
+    failed_files = []
     
     for file_path, file_info in code_files.items():
         original_code = file_info["code"]
@@ -299,10 +329,20 @@ def main():
         if fixed_code:
             code_files_fixed[file_path] = fixed_code
         else:
+            failed_files.append(file_path)
             log(f"⚠️  跳过文件（修复失败）: {file_path}", "WARN")
     
+    # 检查修复结果
     if not code_files_fixed:
         log("❌ 所有文件修复失败", "ERROR")
+        sys.exit(1)
+    
+    if failed_files:
+        log(f"⚠️  警告: {len(failed_files)}/{len(code_files)} 个文件修复失败", "WARN")
+        log(f"失败文件: {', '.join(failed_files)}", "WARN")
+        # 如果有失败的文件，仍然退出失败状态
+        # 确保不会部署不完整的修复
+        log("❌ 修复不完整，终止流程", "ERROR")
         sys.exit(1)
     
     written_count = write_fixed_files(service_name, code_files_fixed)
