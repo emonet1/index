@@ -17,8 +17,9 @@ ISSUE_NUMBER = os.getenv("ISSUE_NUMBER")
 ISSUE_BODY = os.getenv("ISSUE_BODY", "")
 ISSUE_TITLE = os.getenv("ISSUE_TITLE", "")
 
-AI_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-AI_MODEL = "qwen-plus"
+# Gemini API 配置
+AI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+AI_MODEL = "gemini-2.5-flash"  # 或使用 gemini-1.5-pro
 
 # 服务目录映射
 SERVICE_DIRS = {
@@ -100,39 +101,42 @@ def parse_issue_content(issue_body, issue_title):
 
 
 def call_ai_api(prompt, max_retries=3):
-    """调用通义千问 API"""
+    """调用 Gemini API"""
     
     if not AI_API_KEY:
         log("❌ AI_API_KEY 未设置", "ERROR")
         return None
     
+    # Gemini API URL（API key 作为查询参数）
+    url = f"{AI_API_BASE}/{AI_MODEL}:generateContent?key={AI_API_KEY}"
+    
     headers = {
-        "Authorization": f"Bearer {AI_API_KEY}",
         "Content-Type": "application/json"
     }
     
+    # 构建 Gemini 格式的请求
+    system_instruction = "你是一个专业的代码修复工程师。请仔细分析错误日志，定位问题根源，并提供修复后的完整代码。只返回修复后的代码，不要包含任何解释或markdown标记。"
+    
     data = {
-        "model": AI_MODEL,
-        "messages": [
+        "contents": [
             {
-                "role": "system",
-                "content": "你是一个专业的代码修复工程师。请仔细分析错误日志，定位问题根源，并提供修复后的完整代码。只返回修复后的代码，不要包含任何解释或markdown标记。"
-            },
-            {
-                "role": "user",
-                "content": prompt
+                "parts": [
+                    {"text": f"{system_instruction}\n\n{prompt}"}
+                ]
             }
         ],
-        "temperature": 0.3,
-        "max_tokens": 4000
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 4000
+        }
     }
     
     for attempt in range(max_retries):
         try:
-            log(f"调用 AI API (尝试 {attempt + 1}/{max_retries})...")
+            log(f"调用 Gemini API (尝试 {attempt + 1}/{max_retries})...")
             
             response = requests.post(
-                AI_API_URL,
+                url,
                 headers=headers,
                 json=data,
                 timeout=60
@@ -141,12 +145,17 @@ def call_ai_api(prompt, max_retries=3):
             response.raise_for_status()
             result = response.json()
             
-            if 'choices' in result and len(result['choices']) > 0:
-                content = result['choices'][0]['message']['content']
-                log(f"✅ AI 返回 {len(content)} 字符")
-                return content
-            else:
-                log(f"API 返回格式异常: {result}", "ERROR")
+            # 解析 Gemini 响应格式
+            if 'candidates' in result and len(result['candidates']) > 0:
+                candidate = result['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    parts = candidate['content']['parts']
+                    if len(parts) > 0 and 'text' in parts[0]:
+                        content = parts[0]['text']
+                        log(f"✅ Gemini 返回 {len(content)} 字符")
+                        return content
+            
+            log(f"API 返回格式异常: {result}", "ERROR")
                 
         except requests.exceptions.Timeout:
             log(f"请求超时 (尝试 {attempt + 1}/{max_retries})", "WARN")
