@@ -100,6 +100,11 @@ class LogSanitizer:
 def collect_and_report(service):
     """收集信息并上报到 GitHub Issue"""
     
+    # ✅ 修复：提前检查环境变量，避免无效处理
+    if not GITHUB_TOKEN:
+        print("❌ 缺少环境变量 PERSONAL_ACCESS_TOKEN，跳过上报", flush=True)
+        return
+    
     if service not in PROJECTS:
         print(f"❌ 未知服务: {service}", flush=True)
         return
@@ -148,12 +153,7 @@ def collect_and_report(service):
             print(f"⚠️ 读取代码文件失败: {e}", flush=True)
             pass
 
-    # ========== 第4步：检查环境变量 ==========
-    if not GITHUB_TOKEN:
-        print("❌ 缺少环境变量 PERSONAL_ACCESS_TOKEN", flush=True)
-        return
-
-    # ========== 第5步：构建 Issue 内容 ==========
+    # ========== 第4步：构建 Issue 内容 ==========
     time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     title_time = datetime.now().strftime('%m/%d %H:%M')
     title = f"[AUTO-FIX] {service} - {title_time} 服务异常"
@@ -176,7 +176,7 @@ def collect_and_report(service):
         "*⚠️ 日志已自动脱敏，不包含真实敏感信息*\n"
     )
     
-    # ========== 第6步：二次验证脱敏 ==========
+    # ========== 第5步：二次验证脱敏 ==========
     validation_issues = LogSanitizer.validate(issue_body)
     if validation_issues:
         print("❌ 检测到可能的敏感信息泄漏，终止上报！", flush=True)
@@ -184,7 +184,7 @@ def collect_and_report(service):
             print(f"  - {issue}", flush=True)
         return
 
-    # ========== 第7步：调用 GitHub API ==========
+    # ========== 第6步：调用 GitHub API ==========
     url = f"https://api.github.com/repos/{REPO}/issues"
     headers = {
         "Authorization": f"token {GITHUB_TOKEN}",
