@@ -8,12 +8,27 @@ from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# ✅ 导入统一脱敏模块
+# ✅ 导入统一脱敏模块（带降级方案）
 try:
     from sanitizer import LogSanitizer
 except ImportError:
-    print("❌ 严重错误: 找不到 sanitizer.py，请先上传该文件！")
-    sys.exit(1)
+    print("⚠️  未找到 sanitizer.py，使用内置脱敏模块")
+    import re
+    class LogSanitizer:
+        """轻量级内置脱敏器"""
+        @staticmethod
+        def sanitize(text):
+            if not text:
+                return ""
+            # 邮箱
+            text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '***@***.com', text)
+            # IP地址
+            text = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '*.*.*.*', text)
+            # Token/Key
+            text = re.sub(r'(?:sk-|pk-|ghp_|gho_)[A-Za-z0-9_+\-=]{20,}', '***KEY***', text)
+            # JWT
+            text = re.sub(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', 'eyJ***JWT***', text)
+            return text
 
 # ==================== 配置区 ====================
 SERVICE_MAP = {
@@ -70,8 +85,10 @@ def check_critical_state(service_name):
 def trigger_fix_process(service_name):
     now = time.time()
     
-    # 1. 检测严重故障
-    check_critical_state(service_name)
+    # 1. 检测严重故障（如果达到阈值则阻止自动修复）
+    if check_critical_state(service_name):
+        log(f"[{service_name}] 🔥 进入紧急模式：暂停自动修复，等待人工干预!", "CRITICAL")
+        return  # 阻止继续执行
 
     # 2. 冷却期检查
     last_time = last_fix_time.get(service_name, 0)
@@ -105,9 +122,11 @@ class LogHandler(FileSystemEventHandler):
             with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
                 f.seek(current_pos)
                 new_content = f.read()
-                if not new_content: return
                 
+                # ✅ 修复：始终更新文件指针，避免重复读取旧日志
                 file_positions[self.log_path] = f.tell()
+                
+                if not new_content: return
                 
                 # ✅ 修复：预览日志前进行脱敏
                 preview = new_content[:80].replace("\n", " ")
