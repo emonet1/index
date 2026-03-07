@@ -1,0 +1,10 @@
+// This is fixed code
+const data = { items: [] };
+const result = data.items.map(item => item.id);
+// 修复了可能的 undefined 引用问题
+if (data.items && Array.isArray(data.items)) {
+  const result = data.items.map(item => item.id);
+  console.log(result);
+} else {
+  console.error('Data is not an array or undefined');
+}
