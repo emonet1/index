@@ -1,33 +1,189 @@
 name: 🛡️ 人工审查门禁
 
+# ============================================================
+# 触发条件：所有向 main 提交的 PR
+# ============================================================
 on:
   pull_request:
-    branches: [ main ]
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
   check-changes:
+    name: 🔍 变更安全检测
     runs-on: ubuntu-latest
+
     steps:
+      # ——————————————————————————————
+      # 第1步：拉取完整历史，确保 diff 正确
+      # ——————————————————————————————
       - name: 📥 拉取代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🔍 检测变更量
+      # ——————————————————————————————
+      # 第2步：核心检测逻辑（合并为一步，防止中途跳出）
+      # ——————————————————————————————
+      - name: 🔍 检测变更量 & 核心文件
+        id: detect
         run: |
-          # 获取变更行数
-          LINES=$(git diff --shortstat origin/main | awk '{print $4}')
-          echo "Changed lines: $LINES"
-          
-          if [ "$LINES" -gt 100 ]; then
-            echo "⚠️ 变更超过 100 行，强制失败，请求人工审查！"
-            exit 1
+          echo "=============================="
+          echo "开始安全检测..."
+          echo "=============================="
+
+          NEEDS_REVIEW="false"
+          REVIEW_REASONS=""
+
+          # ——————————————————————————
+          # 检测1：变更行数（超过100行 = 大体量修改）
+          # ——————————————————————————
+          STAT=$(git diff --shortstat origin/main...HEAD 2>/dev/null || echo "")
+          echo "Git统计: $STAT"
+
+          # 分别提取 insertions 和 deletions，空值默认为 0（防止崩溃）
+          INS=$(echo "$STAT" | grep -oP '\d+(?= insertion)' || echo "0")
+          DEL=$(echo "$STAT" | grep -oP '\d+(?= deletion)'  || echo "0")
+          INS=${INS:-0}
+          DEL=${DEL:-0}
+          TOTAL=$((INS + DEL))
+
+          echo "新增行数: $INS | 删除行数: $DEL | 总变更: $TOTAL 行"
+
+          if [ "$TOTAL" -gt 100 ]; then
+            echo "⚠️ [触发] 变更超过100行 (共${TOTAL}行)"
+            NEEDS_REVIEW="true"
+            REVIEW_REASONS="${REVIEW_REASONS}\n- 🔴 大体量修改：共 **${TOTAL}行** 变更（阈值100行）"
+          else
+            echo "✅ 变更行数正常 (${TOTAL}行)"
           fi
-          
-      - name: 🔍 检测核心文件
+
+          # ——————————————————————————
+          # 检测2：核心文件是否被修改
+          # ——————————————————————————
+          CHANGED=$(git diff --name-only origin/main...HEAD 2>/dev/null || echo "")
+          echo ""
+          echo "变更文件列表："
+          echo "$CHANGED"
+          echo ""
+
+          # 核心文件列表（本仓库关键文件 + 通用敏感文件）
+          CORE_PATTERN="master_monitor\.py|universal_fix\.py|sanitizer\.py|ai_fix\.py|config\.py|\.env|secrets|database|pb_hooks|schema|migration"
+
+          CORE_HITS=$(echo "$CHANGED" | grep -E "$CORE_PATTERN" || true)
+
+          if [ -n "$CORE_HITS" ]; then
+            echo "⚠️ [触发] 检测到核心文件被修改："
+            echo "$CORE_HITS"
+            NEEDS_REVIEW="true"
+            REVIEW_REASONS="${REVIEW_REASONS}\n- 🔴 核心文件被修改：\`$(echo $CORE_HITS | tr '\n' ' ')\`"
+          else
+            echo "✅ 无核心文件被修改"
+          fi
+
+          # ——————————————————————————
+          # 检测3：是否修改了 GitHub Actions 工作流本身
+          # ——————————————————————————
+          WORKFLOW_HITS=$(echo "$CHANGED" | grep -E "\.github/" || true)
+
+          if [ -n "$WORKFLOW_HITS" ]; then
+            echo "⚠��� [触发] 工作流文件被修改："
+            echo "$WORKFLOW_HITS"
+            NEEDS_REVIEW="true"
+            REVIEW_REASONS="${REVIEW_REASONS}\n- 🟠 CI/CD工作流被修改：\`$(echo $WORKFLOW_HITS | tr '\n' ' ')\`"
+          else
+            echo "✅ 工作流文件未被修改"
+          fi
+
+          # ——————————————————————————
+          # 输出最终结论
+          # ——————————————————————————
+          echo ""
+          echo "=============================="
+          if [ "$NEEDS_REVIEW" = "true" ]; then
+            echo "🚨 结论：需要人工审查！"
+          else
+            echo "✅ 结论：变更安全，无需人工审查"
+          fi
+          echo "=============================="
+
+          # 传递给下一步
+          echo "needs_review=$NEEDS_REVIEW"     >> $GITHUB_OUTPUT
+          echo "total_lines=$TOTAL"             >> $GITHUB_OUTPUT
+          # 多行写入 GITHUB_OUTPUT
+          {
+            echo "review_reasons<<EOF"
+            echo -e "$REVIEW_REASONS"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      # ——————————————————————————————
+      # 第3步：如果需要人工审查 → PR发评论 + 打标签
+      # ——————————————————————————————
+      - name: 🚨 发送人工审查通知
+        if: steps.detect.outputs.needs_review == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN || github.token }}
+          script: |
+            const reasons  = `${{ steps.detect.outputs.review_reasons }}`;
+            const lines     = `${{ steps.detect.outputs.total_lines }}`;
+            const prNumber  = context.payload.pull_request.number;
+
+            // 在 PR 里发评论
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: prNumber,
+              body: [
+                '## 🚨 需要人工审查',
+                '',
+                '自动检测发现此 PR 存在以下风险，**已阻止自动合并**：',
+                '',
+                reasons || '- 检测到高风险变更',
+                '',
+                '---',
+                '### ✅ 如何通过？',
+                '1. **仔细审查**上方列出的变更内容',
+                '2. 确认无误后，由有权限的成员点击 **"Approve"**',
+                '3. Approve 之后方可合并',
+                '',
+                `> 📊 本次共变更 **${lines}** 行代码`
+              ].join('\n')
+            });
+
+            // 打标签（标签不存在时自动跳过，不崩溃）
+            try {
+              await github.rest.issues.addLabels({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: prNumber,
+                labels:       ['needs-human-review']
+              });
+            } catch(e) {
+              console.log('标签添加跳过（标签可能不存在）:', e.message);
+            }
+
+      # ——————————————————————————————
+      # 第4步：需要人工审查时让 CI 失败（阻止合并）
+      # ——————————————————————————————
+      - name: ❌ 阻止合并（等待人工审查）
+        if: steps.detect.outputs.needs_review == 'true'
         run: |
-          # 检查是否修改了数据库配置或密钥文件
-          if git diff --name-only origin/main | grep -E "config.py|secrets|database"; then
-             echo "⚠️ 核心配置文件被修改，强制失败，请求人工审查！"
-             exit 1
-          fi
+          echo "🚨 检测到需要人工审查的变更，CI 失败阻止自动合并！"
+          echo "请查看 PR 评论了解详情，人工 Approve 后方可合并。"
+          exit 1
+
+      # ——————————————————————————————
+      # 第5步：安全通过
+      # ——————————————————————————————
+      - name: ✅ 检测通过
+        if: steps.detect.outputs.needs_review != 'true'
+        run: |
+          echo "✅ 所有检测通过！变更规模正常，无核心文件修改。"
+          echo "可以安全合并。"
