@@ -20,14 +20,13 @@ jobs:
         uses: easingthemes/ssh-deploy@v5.1.0
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          # ⚠️ 核心保护规则：防止覆盖数据库、环境变量和日志
           ARGS: "-avz --delete --exclude='.git/' --exclude='.github/' --exclude='*.log' --exclude='monitor_*.log' --exclude='.env' --exclude='pb/pb_data/' --exclude='pb/pb_migrations/' --exclude='pb/logs/'"
           SOURCE: "./"
           REMOTE_HOST: ${{ secrets.SSH_HOST }}
           REMOTE_USER: ${{ secrets.SSH_USER }}
-          # ⚠️ 严重注意：请确认服务器上的项目实际路径！
-          # 如果你的项目在 /home/ubuntu/emonet1/index，请填这个路径
-          # 下面我使用 SSH_USER 变量动态拼接，比写死 /home/ 更安全
-          TARGET: "/home/${{ secrets.SSH_USER }}/emonet1/index/" 
+          # ⚠️ 严格保留你指定的服务器路径
+          TARGET: "/home/"
 
       - name: 🔄 重启服务
         uses: appleboy/ssh-action@v1.0.3
@@ -36,39 +35,38 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # 切换到项目目录 (请与上面的 TARGET 保持一致)
-            PROJECT_DIR="/home/${{ secrets.SSH_USER }}/emonet1/index/"
-            cd $PROJECT_DIR || { echo "❌ 找不到项目目录"; exit 1; }
-
             echo "🚀 代码已部署，正在重启服务..."
             
-            # 赋予脚本执行权限 (防止新脚本上传后没权限)
-            chmod +x *.py .github/scripts/*.py 2>/dev/null || true
-            
-            # 检查 supervisorctl
+            # 1. 检查 supervisorctl 是否可用
             if ! command -v supervisorctl &> /dev/null; then
               echo "⚠️ supervisorctl 未安装，跳过服务重启"
               exit 0
             fi
             
-            # 逐个重启
-            services=("pocketbase" "ai-proxy" "websocket")
-            has_error=0
+            # 2. 定义需要重启的服务列表
+            SERVICES=("pocketbase" "ai-proxy" "websocket")
+            FAILED_SERVICES=0
             
-            for svc in "${services[@]}"; do
-                echo "正在重启 $svc ..."
-                if supervisorctl restart $svc; then
-                    echo "✅ $svc 重启成功"
-                else
-                    echo "❌ $svc 重启失败"
-                    has_error=1
-                fi
+            # 3. 逐个重启服务并检测结果
+            for SERVICE in "${SERVICES[@]}"; do
+              echo "🔄 正在重启 $SERVICE..."
+              if supervisorctl restart $SERVICE; then
+                echo "✅ $SERVICE 重启成功"
+              else
+                echo "❌ $SERVICE 重启失败"
+                FAILED_SERVICES=1
+              fi
             done
             
+            # 4. 显示最终服务状态
             echo ""
-            echo "📊 服务状态："
+            echo "📊 当前服务状态："
             supervisorctl status
             
-            if [ $has_error -eq 1 ]; then
+            # 5. 如果有任何服务重启失败，标记此部署任务为失败
+            if [ $FAILED_SERVICES -eq 1 ]; then
+              echo "❌ 部署检测到部分服务重启失败，请检查服务器日志！"
               exit 1
             fi
+            
+            echo "✅ 所有服务重启完成！"
