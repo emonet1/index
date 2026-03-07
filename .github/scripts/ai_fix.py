@@ -124,10 +124,10 @@ def apply_code(files_dict):
 # ==========================================
 def main():
     # 检测人工一键修复指令 (/apply A | /apply B | /apply HYBRID)
-    cmd = re.search(r'/apply\s+(A|B|HYBRID)', COMMENT_BODY.upper())
+    cmd = re.search(r'/apply\s+(A|B|HYBRID)', COMMENT_BODY, re.IGNORECASE)
     
     if cmd:
-        choice = cmd.group(1)
+        choice = cmd.group(1).upper()
         print(f"收到人工强制指令: {choice}")
         ctx = get_context()
         prompt = f"Context:\n{ctx}\n\nIssue: {ISSUE_TITLE}\nApply fix using strategy {choice}. Output strictly JSON: {{\"path\": \"content\"}}"
