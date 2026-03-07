@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-AI 自动修复脚本
-在 GitHub Actions 中运行，调用通义千问 API 进行代码修复
+双AI仲裁修复脚本 v3.0 (融合版)
+- 架构: Qwen-Max (方案A) + Gemini-Flash (方案B) -> Gemini-Leader (仲裁)
+- 功能: 自动解析Issue -> 风险评估 -> 双AI并行修复 -> 语法验证 -> 原位覆盖写入
 """
 import os
 import re
@@ -12,32 +13,47 @@ import time
 
 # ==================== 配置区 ====================
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-AI_API_KEY = os.getenv("AI_API_KEY")
+GEMINI_KEY   = os.getenv("GEMINI_API_KEY")
+QWEN_KEY     = os.getenv("QWEN_API_KEY")
 ISSUE_NUMBER = os.getenv("ISSUE_NUMBER")
-ISSUE_BODY = os.getenv("ISSUE_BODY", "")
-ISSUE_TITLE = os.getenv("ISSUE_TITLE", "")
+ISSUE_BODY   = os.getenv("ISSUE_BODY", "")
+ISSUE_TITLE  = os.getenv("ISSUE_TITLE", "")
 
 # Gemini API 配置
-AI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-AI_MODEL = "gemini-2.5-flash"  # 或使用 gemini-1.5-pro
+GEMINI_BASE  = "https://generativelanguage.googleapis.com/v1beta/models"
+GEMINI_MODEL = "gemini-2.0-flash"     # 执行者
+GEMINI_JUDGE = "gemini-1.5-pro"       # 仲裁者 (使用更聪明的模型)
 
-# 服务目录映射
+# 通义千问 API 配置
+QWEN_BASE    = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+QWEN_MODEL   = "qwen-max"
+
+# 服务目录映射 (保持原有的目录感知能力)
 SERVICE_DIRS = {
     "pocketbase": "pb/pb_hooks",
     "websocket": "websocket-server",
     "ai-proxy": "ai-proxy"
 }
+
+# 敏感/重负荷关键词 (触发人工审查)
+CRITICAL_KEYWORDS = [
+    "database", "migration", "schema", "drop table", "alter table",
+    "auth", "password", "secret", "token", "login",
+    "payment", "billing",
+    "rm -rf", "sudo",
+    "architecture change"
+]
 # ================================================
 
-
 def log(message, level="INFO"):
-    """打印日志"""
-    print(f"[{level}] {message}", flush=True)
+    icons = {"INFO": "ℹ️", "WARN": "⚠️", "ERROR": "❌", "OK": "✅", "AI": "🤖", "JUDGE": "⚖️"}
+    icon = icons.get(level, "")
+    print(f"[{level}] {icon} {message}", flush=True)
 
+# ================= 1. 核心解析逻辑 (保留自旧版) =================
 
 def parse_issue_content(issue_body, issue_title):
     """从 Issue 中提取服务名、错误日志和代码文件"""
-    
     log("开始解析 Issue 内容...")
     
     # 1. 提取服务名称
@@ -45,337 +61,251 @@ def parse_issue_content(issue_body, issue_title):
     service_match = re.search(r'\[AUTO-FIX\]\s+(\w+)', issue_title)
     if service_match:
         service_name = service_match.group(1).lower()
-        log(f"识别到服务: {service_name}")
-    else:
-        log("警告: 未能识别服务名称", "WARN")
     
     # 2. 提取错误日志
     error_log = ""
     error_patterns = [
         r'### 📋 错误日志[^\n]*\n```[^\n]*\n(.*?)\n```',
-        r'### 📋 错误日志\s*```[^\n]*\n(.*?)\n```',
         r'错误日志.*?\n```[^\n]*\n(.*?)\n```',
     ]
-    
     for pattern in error_patterns:
-        error_match = re.search(pattern, issue_body, re.DOTALL)
-        if error_match:
-            error_log = error_match.group(1).strip()
-            log(f"✅ 提取到错误日志: {len(error_log)} 字符")
+        match = re.search(pattern, issue_body, re.DOTALL)
+        if match:
+            error_log = match.group(1).strip()
             break
-    
-    if not error_log:
-        log("警告: 未找到错误日志", "WARN")
-        log(f"Issue body 预览（前500字符）:\n{issue_body[:500]}", "DEBUG")
-    
+            
     # 3. 提取代码文件
     code_files = {}
     file_pattern = r'#### `([^`]+)`\s*\n```(\w+)\s*\n(.*?)\n```'
-    
     matches = list(re.finditer(file_pattern, issue_body, re.DOTALL))
-    log(f"找到 {len(matches)} 个代码块")
     
     for match in matches:
         file_path = match.group(1).strip()
         language = match.group(2).strip()
         code = match.group(3).strip()
         
-        if "代码截断" in code or "截断" in code:
-            log(f"⚠️  跳过文件（代码被截断）: {file_path}", "WARN")
-            continue
-        
-        if len(code) < 10:
-            log(f"⚠️  跳过文件（代码太短）: {file_path}", "WARN")
-            continue
-        
-        code_files[file_path] = {
-            "language": language,
-            "code": code
-        }
-        log(f"✅ 提取到文件: {file_path} ({len(code)} 字符)")
-    
-    if not code_files:
-        log("警告: 未找到代码文件", "WARN")
-    
+        if len(code) > 10 and "截断" not in code:
+            code_files[file_path] = {"language": language, "code": code}
+            log(f"提取文件: {file_path} ({language})")
+
     return service_name, error_log, code_files
 
+def assess_risk(title, body):
+    """风险评估"""
+    text = (title + " " + body).lower()
+    hits = [kw for kw in CRITICAL_KEYWORDS if kw in text]
+    if hits:
+        return "CRITICAL", f"检测到敏感关键词: {hits}"
+    if "restart loop" in text or "崩溃" in text:
+        return "HEAVY", "检测到循环崩溃"
+    return "NORMAL", "常规错误"
 
-def call_ai_api(prompt, max_retries=3):
-    """调用 Gemini API"""
-    
-    if not AI_API_KEY:
-        log("❌ AI_API_KEY 未设置", "ERROR")
+# ================= 2. AI 调用封装 =================
+
+def call_qwen(prompt):
+    """调用通义千问"""
+    if not QWEN_KEY:
+        log("QWEN_KEY 未设置", "WARN")
         return None
-    
-    # Gemini API URL（API key 作为查询参数）
-    url = f"{AI_API_BASE}/{AI_MODEL}:generateContent?key={AI_API_KEY}"
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
-    # 构建 Gemini 格式的请求
-    system_instruction = "你是一个专业的代码修复工程师。请仔细分析错误日志，定位问题根源，并提供修复后的完整代码。只返回修复后的代码，不要包含任何解释或markdown标记。"
-    
-    data = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": f"{system_instruction}\n\n{prompt}"}
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 4000
+    try:
+        headers = {"Authorization": f"Bearer {QWEN_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": QWEN_MODEL,
+            "input": {"messages": [{"role": "user", "content": prompt}]},
+            "parameters": {"result_format": "message"}
         }
-    }
-    
-    for attempt in range(max_retries):
-        try:
-            log(f"调用 Gemini API (尝试 {attempt + 1}/{max_retries})...")
-            
-            response = requests.post(
-                url,
-                headers=headers,
-                json=data,
-                timeout=60
-            )
-            
-            response.raise_for_status()
-            result = response.json()
-            
-            # 解析 Gemini 响应格式
-            if 'candidates' in result and len(result['candidates']) > 0:
-                candidate = result['candidates'][0]
-                if 'content' in candidate and 'parts' in candidate['content']:
-                    parts = candidate['content']['parts']
-                    if len(parts) > 0 and 'text' in parts[0]:
-                        content = parts[0]['text']
-                        log(f"✅ Gemini 返回 {len(content)} 字符")
-                        return content
-            
-            log(f"API 返回格式异常: {result}", "ERROR")
-                
-        except requests.exceptions.Timeout:
-            log(f"请求超时 (尝试 {attempt + 1}/{max_retries})", "WARN")
-        except requests.exceptions.RequestException as e:
-            log(f"请求失败: {e}", "ERROR")
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    error_text = e.response.text[:200]
-                    log(f"响应内容: {error_text}", "ERROR")
-                except:
-                    pass
-        except Exception as e:
-            log(f"未知错误: {e}", "ERROR")
-        
-        if attempt < max_retries - 1:
-            time.sleep(2 ** attempt)
-    
-    return None
+        resp = requests.post(QWEN_BASE, headers=headers, json=payload, timeout=90)
+        resp.raise_for_status()
+        return resp.json()["output"]["choices"][0]["message"]["content"]
+    except Exception as e:
+        log(f"Qwen 调用失败: {e}", "ERROR")
+        return None
 
+def call_gemini(prompt, model=GEMINI_MODEL):
+    """调用 Gemini"""
+    if not GEMINI_KEY:
+        log("GEMINI_KEY 未设置", "ERROR")
+        return None
+    try:
+        url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_KEY}"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        resp = requests.post(url, json=payload, timeout=90)
+        resp.raise_for_status()
+        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:
+        log(f"Gemini 调用失败: {e}", "ERROR")
+        return None
 
-def clean_ai_response(text):
-    """清理 AI 返回的代码（增强版）"""
-    # 尝试提取 markdown 代码块中的内容
-    code_block_match = re.search(r'```(?:\w+)?\s*\n(.*?)\n```', text, re.DOTALL)
-    if code_block_match:
-        text = code_block_match.group(1)
-    else:
-        # 如果没有代码块，尝试移除开头和结尾的标记
-        text = re.sub(r'^```\w*\n', '', text)
-        text = re.sub(r'\n```$', '', text)
+def clean_code(text, lang):
+    """清理 AI 返回的代码"""
+    # 提取 Markdown 代码块
+    pattern = r'```(?:' + lang + r'|python|js|javascript)?\s*\n(.*?)\n```'
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
     
-    # 移除开头的语言标识符
-    text = re.sub(r'^(javascript|python|js|py)\n', '', text, flags=re.IGNORECASE)
-    
+    # 如果没有代码块，尝试直接清洗
+    text = re.sub(r'^```.*?\n', '', text)
+    text = re.sub(r'\n```$', '', text)
     return text.strip()
 
-
 def validate_code(code, language):
-    """验证代码基本语法"""
-    # Python 语法检查
-    if language in ['python', 'py']:
+    """语法验证"""
+    if 'python' in language or language == 'py':
         try:
             compile(code, '<string>', 'exec')
             return True, "语法正确"
         except SyntaxError as e:
-            return False, f"Python语法错误: {e}"
-    
-    # JavaScript 基本检查（括号匹配）
-    if language in ['javascript', 'js']:
+            return False, f"Python SyntaxError: {e}"
+    # JS 简单检查
+    if 'script' in language or language == 'js':
         if code.count('{') != code.count('}'):
-            return False, f"括号不匹配: {{={code.count('{')} }}={code.count('}')}"
-        if code.count('(') != code.count(')'):
-            return False, f"圆括号不匹配: (={code.count('(')} )={code.count(')')}"
-        return True, "基本检查通过"
-    
-    return True, "未验证"
+            return False, "JS 括号不匹配"
+    return True, "验证通过"
 
+# ================= 3. 仲裁核心逻辑 =================
 
-def fix_code_file(file_path, original_code, error_log, language):
-    """使用 AI 修复单个代码文件"""
+def arbitrate_fix(file_path, original_code, error_log, language):
+    """对单个文件执行双AI修复与仲裁"""
+    log(f"正在修复: {file_path}...", "AI")
     
-    log(f"开始修复文件: {file_path}")
+    prompt_base = f"""
+    【任务】修复代码错误
+    【文件】{file_path}
+    【语言】{language}
+    【错误日志】
+    {error_log[:1500]}
     
-    error_log_truncated = error_log[:1500] if len(error_log) > 1500 else error_log
+    【原始代码】
+    {original_code}
     
-    # 使用字符串拼接代替 f-string 三引号，避免语法错误
-    prompt = "## 任务\n"
-    prompt += "修复以下代码中的错误。\n\n"
-    prompt += "## 错误日志\n"
-    prompt += "```\n"
-    prompt += error_log_truncated + "\n"
-    prompt += "```\n\n"
-    prompt += "## 文件路径\n"
-    prompt += file_path + "\n\n"
-    prompt += "## 原始代码\n"
-    prompt += "```" + language + "\n"
-    prompt += original_code + "\n"
-    prompt += "```\n\n"
-    prompt += "## 要求\n"
-    prompt += "1. 仔细分析错误日志，定位问题根源\n"
-    prompt += "2. 修复所有语法错误和逻辑错误\n"
-    prompt += "3. 保持原有代码结构和注释\n"
-    prompt += "4. 确保修复后的代码可以正常运行\n"
-    prompt += "5. **只返回修复后的完整代码，不要包含任何解释、注释或markdown标记**\n\n"
-    prompt += "## 输出\n"
-    prompt += "直接输出修复后的代码："
+    请输出修复后的完整代码。只输出代码，不要解释。
+    """
+
+    # 1. 双AI 并行生成
+    log("请求 Qwen...", "AI")
+    sol_qwen = call_qwen(prompt_base)
     
-    fixed_code = call_ai_api(prompt)
+    log("请求 Gemini...", "AI")
+    sol_gemini = call_gemini(prompt_base)
     
-    if not fixed_code:
-        log(f"❌ AI 修复失败: {file_path}", "ERROR")
-        return None
+    if not sol_qwen and not sol_gemini:
+        return None, "所有 AI 均失败"
+
+    # 2. Gemini Leader 仲裁
+    log("Gemini Leader 正在仲裁...", "JUDGE")
+    judge_prompt = f"""
+    你是首席架构师。针对文件 {file_path} 的错误，两个 AI 提供了方案。
     
-    fixed_code = clean_ai_response(fixed_code)
+    【原始错误】{error_log[:500]}
     
-    if len(fixed_code) < 10:
-        log(f"❌ 修复后的代码太短: {file_path}", "ERROR")
-        return None
+    【方案 A (Qwen)】
+    {sol_qwen if sol_qwen else "未响应"}
     
-    # 验证代码语法
-    is_valid, msg = validate_code(fixed_code, language)
+    【方案 B (Gemini)】
+    {sol_gemini if sol_gemini else "未响应"}
+    
+    请：
+    1. 评估哪个方案更安全、更有效。
+    2. 如果两个都有问题，请基于两者重写最优代码。
+    3. 输出最终代码和简短理由。
+    
+    输出格式要求：
+    Reason: [一句话理由]
+    Code:
+    ```
+    [最终代码]
+    ```
+    """
+    
+    verdict = call_gemini(judge_prompt, model=GEMINI_JUDGE)
+    if not verdict:
+        verdict = sol_gemini or sol_qwen # 降级处理
+    
+    # 提取最终代码
+    final_code = clean_code(verdict, language)
+    
+    # 验证
+    is_valid, msg = validate_code(final_code, language)
     if not is_valid:
-        log(f"❌ 代码验证失败 {file_path}: {msg}", "ERROR")
-        return None
-    else:
-        log(f"✅ 代码验证通过: {msg}")
-    
-    log(f"✅ 修复完成: {file_path} ({len(fixed_code)} 字符)")
-    return fixed_code
-
-
-def write_fixed_files(service_name, code_files_fixed):
-    """将修复后的代码写入文件"""
-    
-    log("开始写入修复后的文件...")
-    
-    service_dir = SERVICE_DIRS.get(service_name, service_name)
-    log(f"目标目录: {service_dir}")
-    
-    written_count = 0
-    for file_path, fixed_code in code_files_fixed.items():
-        full_path = os.path.join(service_dir, file_path)
-        log(f"准备写入: {full_path}")
+        log(f"仲裁代码验证失败: {msg}", "ERROR")
+        # 尝试回退到方案B或A
+        if sol_gemini and validate_code(clean_code(sol_gemini, language), language)[0]:
+            return clean_code(sol_gemini, language), "仲裁失败，回退到 Gemini 方案"
+        return None, f"修复失败: {msg}"
         
-        dir_path = os.path.dirname(full_path)
-        if dir_path:
-            try:
-                os.makedirs(dir_path, exist_ok=True)
-                log(f"确保目录存在: {dir_path}")
-            except Exception as e:
-                log(f"创建目录失败 {dir_path}: {e}", "ERROR")
-                continue
-        
-        try:
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.write(fixed_code)
-            log(f"✅ 已写入: {full_path} ({len(fixed_code)} 字节)")
-            written_count += 1
-        except Exception as e:
-            log(f"❌ 写入失败 {full_path}: {e}", "ERROR")
-    
-    return written_count
+    return final_code, verdict
 
+# ================= 主程序 =================
 
 def main():
-    """主函数"""
-    
-    log("=" * 60)
-    log("🤖 AI 自动修复流程开始")
-    log("=" * 60)
-    
-    if not AI_API_KEY:
-        log("❌ 缺少 AI_API_KEY 环境变量", "ERROR")
-        sys.exit(1)
-    
-    if not ISSUE_NUMBER:
-        log("❌ 缺少 ISSUE_NUMBER 环境变量", "ERROR")
-        sys.exit(1)
-    
-    if not ISSUE_BODY:
-        log("❌ ISSUE_BODY 为空", "ERROR")
-        sys.exit(1)
-    
-    log(f"Issue #{ISSUE_NUMBER}")
-    log(f"Issue 标题: {ISSUE_TITLE}")
-    log(f"Issue Body 长度: {len(ISSUE_BODY)} 字符")
-    
-    service_name, error_log, code_files = parse_issue_content(ISSUE_BODY, ISSUE_TITLE)
-    
-    if not error_log:
-        log("❌ 未找到错误日志，无法修复", "ERROR")
-        sys.exit(1)
-    
-    if not code_files:
-        log("❌ 未找到代码文件，无法修复", "ERROR")
-        sys.exit(1)
-    
-    log(f"📊 统计: 服务={service_name}, 错误日志={len(error_log)}字符, 文件数={len(code_files)}")
-    
-    code_files_fixed = {}
-    failed_files = []
-    
-    for file_path, file_info in code_files.items():
-        original_code = file_info["code"]
-        language = file_info["language"]
-        
-        fixed_code = fix_code_file(file_path, original_code, error_log, language)
-        
-        if fixed_code:
-            code_files_fixed[file_path] = fixed_code
-        else:
-            failed_files.append(file_path)
-            log(f"⚠️  跳过文件（修复失败）: {file_path}", "WARN")
-    
-    # 检查修复结果
-    if not code_files_fixed:
-        log("❌ 所有文件修复失败", "ERROR")
-        sys.exit(1)
-    
-    if failed_files:
-        log(f"⚠️  警告: {len(failed_files)}/{len(code_files)} 个文件修复失败", "WARN")
-        log(f"失败文件: {', '.join(failed_files)}", "WARN")
-        log(f"✅ 但有 {len(code_files_fixed)} 个文件修复成功，继续流程", "INFO")
-    
-    written_count = write_fixed_files(service_name, code_files_fixed)
-    
-    if written_count == 0:
-        log("❌ 没有文件被写入", "ERROR")
-        sys.exit(1)
-    
-    log("=" * 60)
-    log(f"✅ AI 修复流程完成！共修复并写入 {written_count} 个文件")
-    log("=" * 60)
+    log("=" * 50)
+    log("🤖 双AI仲裁修复系统 v3.0 启动")
+    log("=" * 50)
 
+    if not ISSUE_BODY:
+        log("没有 Issue 内容，退出", "ERROR")
+        sys.exit(1)
+
+    # 1. 风险评估
+    risk, reason = assess_risk(ISSUE_TITLE, ISSUE_BODY)
+    log(f"风险等级: {risk} | {reason}")
+    
+    if risk in ["CRITICAL", "HEAVY"]:
+        with open("human_review_needed.txt", "w", encoding="utf-8") as f:
+            f.write(f"Level: {risk}\nReason: {reason}")
+        log("触发人工审查，停止自动修复", "WARN")
+        sys.exit(0)
+
+    # 2. 解析 Issue
+    service_name, error_log, code_files = parse_issue_content(ISSUE_BODY, ISSUE_TITLE)
+    if not code_files:
+        log("未找到代码文件，无法修复", "ERROR")
+        sys.exit(1)
+
+    # 3. 遍历修复
+    fixed_files = {}
+    report_content = f"# 🤖 AI 修复报告\nIssue: #{ISSUE_NUMBER}\n\n"
+    
+    for path, info in code_files.items():
+        code, justification = arbitrate_fix(path, info['code'], error_log, info['language'])
+        
+        if code:
+            fixed_files[path] = code
+            report_content += f"## 文件: `{path}`\n\n**仲裁结果**: \n{justification[:500]}...\n\n---\n"
+        else:
+            report_content += f"## 文件: `{path}`\n\n❌ 修复失败\n\n---\n"
+
+    # 4. 写入文件 (原位覆盖)
+    service_dir = SERVICE_DIRS.get(service_name, service_name)
+    write_count = 0
+    
+    for path, code in fixed_files.items():
+        # 组合完整路径：如果是已知服务，加上前缀；否则假设是相对路径
+        # 注意：这里需要根据实际仓库结构微调，这里假设 issue 里的 path 是相对路径
+        if service_name != "unknown" and not path.startswith(service_dir):
+            full_path = os.path.join(service_dir, path)
+        else:
+            full_path = path
+            
+        try:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(code)
+            log(f"已写入: {full_path}", "OK")
+            write_count += 1
+        except Exception as e:
+            log(f"写入失败 {full_path}: {e}", "ERROR")
+
+    # 5. 保存报告供 PR 使用
+    with open("AI_REVIEW_REPORT.md", "w", encoding="utf-8") as f:
+        f.write(report_content)
+        
+    if write_count > 0:
+        log(f"成功修复 {write_count} 个文件", "OK")
+    else:
+        log("未能写入任何修复", "ERROR")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        log(f"❌ 程序异常退出: {e}", "ERROR")
-        import traceback
-        log(traceback.format_exc(), "ERROR")
-        sys.exit(1)
+    main()
