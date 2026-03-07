@@ -8,7 +8,7 @@ on:
 
 jobs:
   deploy:
-    # 只有当 PR 合并且包含 'auto-fix' 标签，或人工合并时触发
+    # 只有当 PR 被合并 (merged=true) 时才触发
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
@@ -24,12 +24,10 @@ jobs:
           SOURCE: "./"
           REMOTE_HOST: ${{ secrets.SSH_HOST }}
           REMOTE_USER: ${{ secrets.SSH_USER }}
-          TARGET: "/home/"
-          # 解释：
-          # --exclude='pb/pb_data/'       : 绝对保护 SQLite 数据库不被覆盖
-          # --exclude='pb/pb_migrations/' : 保护服务器端生成的迁移文件
-          # --exclude='.env'              : 保护服务器环境变量配置
-          # --exclude='*.log'             : 不覆盖或删除服务器日志
+          # ⚠️ 严重注意：请确认服务器上的项目实际路径！
+          # 如果你的项目在 /home/ubuntu/emonet1/index，请填这个路径
+          # 下面我使用 SSH_USER 变量动态拼接，比写死 /home/ 更安全
+          TARGET: "/home/${{ secrets.SSH_USER }}/emonet1/index/" 
 
       - name: 🔄 重启服务
         uses: appleboy/ssh-action@v1.0.3
@@ -38,48 +36,39 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # 切换到项目目录 (请与上面的 TARGET 保持一致)
+            PROJECT_DIR="/home/${{ secrets.SSH_USER }}/emonet1/index/"
+            cd $PROJECT_DIR || { echo "❌ 找不到项目目录"; exit 1; }
+
             echo "🚀 代码已部署，正在重启服务..."
             
-            # 检查 supervisorctl 是否可用
+            # 赋予脚本执行权限 (防止新脚本上传后没权限)
+            chmod +x *.py .github/scripts/*.py 2>/dev/null || true
+            
+            # 检查 supervisorctl
             if ! command -v supervisorctl &> /dev/null; then
               echo "⚠️ supervisorctl 未安装，跳过服务重启"
               exit 0
             fi
             
-            # 单独重启每个服务，记录结果
-            RESTART_FAILED=0
+            # 逐个重启
+            services=("pocketbase" "ai-proxy" "websocket")
+            has_error=0
             
-            echo "重启 pocketbase..."
-            if supervisorctl restart pocketbase; then
-              echo "✅ pocketbase 重启成功"
-            else
-              echo "❌ pocketbase 重启失败"
-              RESTART_FAILED=1
-            fi
-            
-            echo "重启 ai-proxy..."
-            if supervisorctl restart ai-proxy; then
-              echo "✅ ai-proxy 重启成功"
-            else
-              echo "❌ ai-proxy 重启失败"
-              RESTART_FAILED=1
-            fi
-            
-            echo "重启 websocket..."
-            if supervisorctl restart websocket; then
-              echo "✅ websocket 重启成功"
-            else
-              echo "❌ websocket 重启失败"
-              RESTART_FAILED=1
-            fi
+            for svc in "${services[@]}"; do
+                echo "正在重启 $svc ..."
+                if supervisorctl restart $svc; then
+                    echo "✅ $svc 重启成功"
+                else
+                    echo "❌ $svc 重启失败"
+                    has_error=1
+                fi
+            done
             
             echo ""
-            echo "📊 服务状态总览："
+            echo "📊 服务状态："
             supervisorctl status
             
-            if [ $RESTART_FAILED -eq 1 ]; then
-              echo "⚠️ 部分服务重启失败，请检查日志"
+            if [ $has_error -eq 1 ]; then
               exit 1
             fi
-            
-            echo "✅ 所有服务重启完成"
