@@ -17,7 +17,7 @@ ISSUE_BODY = os.environ.get("ISSUE_BODY")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 
 # 模型配置
-GEMINI_MODEL = "gemini-2.5-pro" # 使用 Pro 模型进行逻辑仲裁更强
+GEMINI_MODEL = "gemini-2.5-pro-preview-03-25" # 使用 Pro 模型进行逻辑仲裁更强
 QWEN_MODEL = "qwen-turbo"       # 或 qwen-max
 
 # ——————————————————————————————————————————————————————————————————————
