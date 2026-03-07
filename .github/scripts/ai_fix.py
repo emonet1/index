@@ -16,32 +16,35 @@ ISSUE_TITLE = os.environ.get("ISSUE_TITLE")
 ISSUE_BODY = os.environ.get("ISSUE_BODY")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 
-# 模型配置
-GEMINI_MODEL = "gemini-1.5-flash" # 使用 Pro 模型进行逻辑仲裁更强
-QWEN_MODEL = "qwen-turbo"       # 或 qwen-max
+# 修正后的模型标识符
+GEMINI_MODEL = "gemini-1.5-flash"  # 建议使用 flash，响应快且稳
+QWEN_MODEL = "qwen-turbo"
 
 # ——————————————————————————————————————————————————————————————————————
 # 工具函数
 # ——————————————————————————————————————————————————————————————————————
 
 def get_project_files():
-    """获取当前目录下主要的 Python/JS/MD 文件内容，提供上下文"""
+    """获取上下文代码"""
     context = ""
-    # 简单遍历，限制大小以防 Token 溢出
-    files = glob.glob("**/*.py", recursive=True) + glob.glob("**/*.js", recursive=True)
-    for f in files[:5]: # 限制读取文件数量
-        if "node_modules" in f or "venv" in f: continue
+    # 扩大搜索范围，排除干扰项
+    files = glob.glob("**/*.py", recursive=True) + glob.glob("**/*.js", recursive=True) + glob.glob("**/*.go", recursive=True)
+    count = 0
+    for f in files:
+        if any(x in f for x in ["node_modules", "venv", ".git", "__pycache__"]): continue
+        if count > 10: break # 限制文件数
         try:
             with open(f, 'r', encoding='utf-8') as file:
                 content = file.read()
-                if len(content) < 2000: # 只读取较小的文件
+                if len(content) < 5000:
                     context += f"\n--- File: {f} ---\n{content}\n"
+                    count += 1
         except:
             pass
     return context
 
 def call_qwen(prompt, system_prompt="You are a helpful coding assistant."):
-    """调用通义千问 API (OpenAI 兼容格式 或 DashScope 原生)"""
+    """调用通义千问 API"""
     url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {QWEN_API_KEY}",
@@ -60,184 +63,163 @@ def call_qwen(prompt, system_prompt="You are a helpful coding assistant."):
         return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
         print(f"❌ Qwen API Error: {e}")
-        return "Error generating solution."
+        return "Error: Qwen failed to generate solution."
 
-def call_gemini(prompt, system_instruction=None):
-    """调用 Google Gemini API"""
+def call_gemini(prompt, system_instruction=None, is_json=False):
+    """
+    调用 Google Gemini API
+    is_json: 如果为 True，强制模型返回 JSON 格式
+    """
+    # 确保 URL 格式正确，使用 v1beta
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     
-    # Gemini 1.5 支持 system_instruction
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2}
+        "generationConfig": {
+            "temperature": 0.1, # 降低随机性
+        }
     }
+    
+    if is_json:
+        # 强制输出 JSON 格式，这是解决解析错误的最高级手段
+        payload["generationConfig"]["response_mime_type"] = "application/json"
     
     if system_instruction:
         payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
     try:
         resp = requests.post(url, json=payload, timeout=60)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            print(f"❌ Gemini API Error: {resp.status_code}")
+            print(f"Details: {resp.text}")
+            return None
+        
         result = resp.json()
         return result['candidates'][0]['content']['parts'][0]['text']
     except Exception as e:
-        print(f"❌ Gemini API Error: {e}")
-        if resp.text: print(f"Details: {resp.text}")
-        return "Error generating solution."
+        print(f"❌ Gemini Exception: {e}")
+        return None
 
 # ——————————————————————————————————————————————————————————————————————
 # 主逻辑
 # ——————————————————————————————————————————————————————————————————————
 
 def main():
+    if not GEMINI_API_KEY or not QWEN_API_KEY:
+        print("❌ 错误: 缺少 API Key 配置")
+        sys.exit(1)
+
     print(f"🚀 开始处理 Issue #{ISSUE_NUMBER}: {ISSUE_TITLE}")
     
-    # 1. 获取代码上下文
     code_context = get_project_files()
     
-    # 2. 构建基础提示词
     base_prompt = f"""
-    Context (Project Files Snippets):
-    {code_context}
-    
-    The Issue:
-    Title: {ISSUE_TITLE}
-    Description: {ISSUE_BODY}
-    
-    Task:
-    Provide a fix for this issue. 
-    1. Analyze the problem.
-    2. Provide the corrected full code for the specific file(s).
-    3. Explain your changes briefly.
-    """
+Context (Project Files Snippets):
+{code_context}
 
-    # ————————————————————————————————————————————————
-    # 3. 双 AI 生成方案
-    # ————————————————————————————————————————————————
+The Issue:
+Title: {ISSUE_TITLE}
+Description: {ISSUE_BODY}
+
+Task:
+Provide a technical fix for this issue. 
+1. Analyze the root cause.
+2. Provide the corrected full code for the specific file(s).
+3. Explain your changes.
+"""
+
+    # 1. 生成两个方案
     print("🤖 正在请求 Qwen 生成方案 (Plan A)...")
-    plan_a = call_qwen(base_prompt, system_prompt="You are an expert Python developer. Provide a robust fix.")
+    plan_a = call_qwen(base_prompt, "You are an expert developer. Provide a specific and robust fix.")
     
     print("🤖 正在请求 Gemini 生成方案 (Plan B)...")
-    plan_b = call_gemini(base_prompt, system_instruction="You are a senior code reviewer and developer. Provide a clean, secure fix.")
+    plan_b = call_gemini(base_prompt, "You are a senior developer. Provide a clean, secure fix.")
+    
+    if not plan_a and not plan_b:
+        print("❌ 两个模型均未生成有效方案。")
+        sys.exit(1)
 
-    # ————————————————————————————————————————————————
-    # 4. Gemini 仲裁 (Leader Role)
-    # ————————————————————————————————————————————————
+    # 2. 仲裁阶段
     print("⚖️ 进入仲裁阶段 (Gemini Leader)...")
     
     arbitration_prompt = f"""
-    You are the Chief Technology Officer (CTO) and final arbitrator.
+Compare the following two solutions for Issue: "{ISSUE_TITLE}"
+
+=== SOLUTION A (Qwen) ===
+{plan_a}
+
+=== SOLUTION B (Gemini) ===
+{plan_b}
+
+--- TASK ---
+1. Evaluate Logic, Security, and Completeness.
+2. Pick the winner ('A' or 'B').
+3. Output the result in STRICT JSON format.
+
+--- REQUIRED JSON STRUCTURE ---
+{{
+    "winner": "A" or "B" or "NONE",
+    "analysis_a": "critique",
+    "analysis_b": "critique",
+    "comparison": "reasoning",
+    "risk_level": "LOW/MEDIUM/HIGH",
+    "human_review_required": false,
+    "final_solution_code": {{
+         "relative/path/to/file.ext": "FULL CODE CONTENT"
+    }},
+    "pr_report_markdown": "Detailed Markdown summary"
+}}
+"""
     
-    We have an Issue: "{ISSUE_TITLE}"
+    # 使用 is_json=True 强制输出纯 JSON
+    verdict_raw = call_gemini(arbitration_prompt, "You are a CTO and code arbitrator. Output ONLY JSON.", is_json=True)
     
-    Two AI developers have proposed solutions:
-    
-    === SOLUTION A (by Qwen) ===
-    {plan_a}
-    
-    === SOLUTION B (by Gemini) ===
-    {plan_b}
-    
-    --- YOUR TASK ---
-    1. Compare Solution A and Solution B critically.
-    2. Analyze Logic, Security, Performance, and Code Style.
-    3. Decide the WINNER (A or B). If both are bad or dangerous, reject both.
-    4. Provide a DETAILED reasoning for the Pull Request description.
-    
-    --- OUTPUT FORMAT (Strict JSON) ---
-    You MUST output valid JSON only. Do not wrap in markdown code blocks. Structure:
-    {{
-        "analysis_a": "Detailed critique of A (pros/cons)",
-        "analysis_b": "Detailed critique of B (pros/cons)",
-        "comparison": "Why is one better than the other?",
-        "risk_level": "LOW", "MEDIUM", or "HIGH",
-        "human_review_required": boolean (true if HIGH risk or core logic change),
-        "winner": "A" or "B" or "NONE",
-        "rejection_reason": "If winner is NONE, explain why",
-        "final_solution_code": {{
-             "filename.ext": "FULL CORRECTED CODE CONTENT HERE"
-        }},
-        "pr_report_markdown": "A well-formatted markdown text summarizing the decision, suitable for PR body."
-    }}
-    """
-    
-    verdict_raw = call_gemini(arbitration_prompt, system_instruction="You are a JSON-speaking strict code arbitrator.")
-    
-    # 清理 Gemini 可能返回的 Markdown 标记 ```json ... ```
-    verdict_clean = verdict_raw.replace("```json", "").replace("```", "").strip()
-    
-    try:
-        verdict = json.loads(verdict_clean)
-    except json.JSONDecodeError:
-        print("❌ JSON 解析失败，仲裁者返回了非结构化数据。")
-        print(verdict_raw)
+    if not verdict_raw:
+        print("❌ 仲裁者未能返回结果。")
         sys.exit(1)
 
-    # ————————————————————————————————————————————————
-    # 5. 执行仲裁结果
-    # ————————————————————————————————————————————————
-    
-    # 检查是否需要人工审查
-    if verdict.get("human_review_required") or verdict.get("risk_level") == "HIGH" or verdict.get("winner") == "NONE":
-        reason = verdict.get("rejection_reason") or verdict.get("comparison")
-        print(f"🛑 触发人工审查拦截: {reason}")
+    try:
+        verdict = json.loads(verdict_raw)
+    except json.JSONDecodeError:
+        # 最后的兜底：尝试手动清洗 Markdown
+        print("⚠️ JSON 直接解析失败，尝试清洗补救...")
+        verdict_clean = verdict_raw.replace("```json", "").replace("```", "").strip()
+        try:
+            verdict = json.loads(verdict_clean)
+        except:
+            print("❌ 仲裁数据解析彻底失败。")
+            print(verdict_raw)
+            sys.exit(1)
+
+    # 3. 处理仲裁结果
+    if verdict.get("winner") == "NONE" or verdict.get("human_review_required") == True:
+        reason = verdict.get("comparison", "AI 判定需要人工介入")
+        print(f"🛑 拦截：需要人工审查。原因: {reason}")
         with open("human_review_needed.txt", "w", encoding="utf-8") as f:
             f.write(reason)
-        sys.exit(0) # 退出脚本，后续 Workflow 步骤会处理
-
-    # 写入代码文件
-    print(f"🏆 获胜者: 方案 {verdict['winner']}")
-    changes = verdict.get("final_solution_code", {})
-    
-    if not changes:
-        print("⚠️ 获胜但未提供代码，转人工。")
-        with open("human_review_needed.txt", "w") as f: f.write("AI selected a winner but failed to output code structure.")
         sys.exit(0)
 
-    for filename, content in changes.items():
-        # 简单的安全检查：防止写入 .github 目录
-        if ".github" in filename:
-            print(f"⚠️ 跳过写入敏感文件: {filename}")
-            continue
+    # 4. 应用代码更改
+    winner = verdict.get("winner")
+    print(f"🏆 获胜方案: {winner}")
+    
+    files_to_fix = verdict.get("final_solution_code", {})
+    if not files_to_fix:
+        print("⚠️ 方案获胜但未检测到待修改的代码文件。")
+        sys.exit(0)
+
+    for filepath, content in files_to_fix.items():
+        if ".github" in filepath or "/" not in filepath and filepath.endswith(".md"):
+            continue # 简单安全过滤
             
-        # 确保目录存在
-        os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else ".", exist_ok=True)
-        
-        print(f"✏️ 正在写入文件: {filename}")
-        with open(filename, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
+        print(f"✏️ 正在写入文件: {filepath}")
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
 
-    # ————————————————————————————————————————————————
-    # 6. 生成详细报告 (用于 PR Body)
-    # ————————————————————————————————————————————————
-    report_content = f"""
-# 🤖 AI 仲裁修复报告
-
-> **Issue**: #{ISSUE_NUMBER} {ISSUE_TITLE}
-
-## ⚖️ 仲裁结果
-- 🟦 **方案 A (Qwen)**: {verdict['analysis_a']}
-- 🟩 **方案 B (Gemini)**: {verdict['analysis_b']}
-
-### 🏆 最终裁决：方案 {verdict['winner']} 胜出
-
-**推理过程**:
-{verdict['comparison']}
-
-## 🛡️ 风险评估
-- **风险等级**: {verdict['risk_level']}
-- **人工复核**: {'需要' if verdict['human_review_required'] else '无需'}
-
----
-*Generated by Dual-AI Arbitration Workflow (Qwen + Gemini)*
-    """
-    
-    # 如果 JSON 中 AI 自己生成了更好的 Markdown，则优先使用
-    if verdict.get("pr_report_markdown"):
-         report_content = verdict["pr_report_markdown"] + "\n\n---\n*Automated by Dual-AI System*"
-
+    # 5. 生成报告
     with open("AI_REVIEW_REPORT.md", "w", encoding="utf-8") as f:
-        f.write(report_content)
+        f.write(verdict.get("pr_report_markdown", "# AI 自动修复报告\n无法生成详细描述"))
     
     print("✅ 修复脚本执行完成。")
 
