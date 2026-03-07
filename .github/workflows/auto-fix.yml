@@ -1,245 +1,130 @@
-import os
-import json
-import requests
-import sys
-import glob
+name: 🤖 双AI仲裁自动修复
 
-# ——————————————————————————————————————————————————————————————————————
-# 配置与常量
-# ——————————————————————————————————————————————————————————————————————
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-QWEN_API_KEY = os.environ.get("QWEN_API_KEY")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+on:
+  issues:
+    types: [opened, reopened, labeled]
 
-ISSUE_NUMBER = os.environ.get("ISSUE_NUMBER")
-ISSUE_TITLE = os.environ.get("ISSUE_TITLE")
-ISSUE_BODY = os.environ.get("ISSUE_BODY")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
 
-# 模型配置
-GEMINI_MODEL = "gemini-1.5-pro" # 使用 Pro 模型进行逻辑仲裁更强
-QWEN_MODEL = "qwen-turbo"       # 或 qwen-max
+jobs:
+  ai-fix:
+    # 只有当 Issue 包含 'auto-fix' 标签时才运行
+    if: contains(github.event.issue.labels.*.name, 'auto-fix')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
+      
+      - name: 🐍 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 📦 安装依赖
+        run: pip install requests
+      
+      # ————————————————————————————————————————————————
+      # 核心步骤：运行双AI脚本
+      # ————————————————————————————————————————————————
+      - name: 🤖 运行双AI仲裁脚本
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          # ⚠️ 注意这里改成了新的两个 Key
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python .github/scripts/ai_fix.py
 
-# ——————————————————————————————————————————————————————————————————————
-# 工具函数
-# ——————————————————————————————————————————————————————————————————————
-
-def get_project_files():
-    """获取当前目录下主要的 Python/JS/MD 文件内容，提供上下文"""
-    context = ""
-    # 简单遍历，限制大小以防 Token 溢出
-    files = glob.glob("**/*.py", recursive=True) + glob.glob("**/*.js", recursive=True)
-    for f in files[:5]: # 限制读取文件数量
-        if "node_modules" in f or "venv" in f: continue
-        try:
-            with open(f, 'r', encoding='utf-8') as file:
-                content = file.read()
-                if len(content) < 2000: # 只读取较小的文件
-                    context += f"\n--- File: {f} ---\n{content}\n"
-        except:
-            pass
-    return context
-
-def call_qwen(prompt, system_prompt="You are a helpful coding assistant."):
-    """调用通义千问 API (OpenAI 兼容格式 或 DashScope 原生)"""
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {QWEN_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": QWEN_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
-    }
-    try:
-        resp = requests.post(url, headers=headers, json=data, timeout=60)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"❌ Qwen API Error: {e}")
-        return "Error generating solution."
-
-def call_gemini(prompt, system_instruction=None):
-    """调用 Google Gemini API"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    
-    # Gemini 1.5 支持 system_instruction
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2}
-    }
-    
-    if system_instruction:
-        payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
-
-    try:
-        resp = requests.post(url, json=payload, timeout=60)
-        resp.raise_for_status()
-        result = resp.json()
-        return result['candidates'][0]['content']['parts'][0]['text']
-    except Exception as e:
-        print(f"❌ Gemini API Error: {e}")
-        if resp.text: print(f"Details: {resp.text}")
-        return "Error generating solution."
-
-# ——————————————————————————————————————————————————————————————————————
-# 主逻辑
-# ——————————————————————————————————————————————————————————————————————
-
-def main():
-    print(f"🚀 开始处理 Issue #{ISSUE_NUMBER}: {ISSUE_TITLE}")
-    
-    # 1. 获取代码上下文
-    code_context = get_project_files()
-    
-    # 2. 构建基础提示词
-    base_prompt = f"""
-    Context (Project Files Snippets):
-    {code_context}
-    
-    The Issue:
-    Title: {ISSUE_TITLE}
-    Description: {ISSUE_BODY}
-    
-    Task:
-    Provide a fix for this issue. 
-    1. Analyze the problem.
-    2. Provide the corrected full code for the specific file(s).
-    3. Explain your changes briefly.
-    """
-
-    # ————————————————————————————————————————————————
-    # 3. 双 AI 生成方案
-    # ————————————————————————————————————————————————
-    print("🤖 正在请求 Qwen 生成方案 (Plan A)...")
-    plan_a = call_qwen(base_prompt, system_prompt="You are an expert Python developer. Provide a robust fix.")
-    
-    print("🤖 正在请求 Gemini 生成方案 (Plan B)...")
-    plan_b = call_gemini(base_prompt, system_instruction="You are a senior code reviewer and developer. Provide a clean, secure fix.")
-
-    # ————————————————————————————————————————————————
-    # 4. Gemini 仲裁 (Leader Role)
-    # ————————————————————————————————————————————————
-    print("⚖️ 进入仲裁阶段 (Gemini Leader)...")
-    
-    arbitration_prompt = f"""
-    You are the Chief Technology Officer (CTO) and final arbitrator.
-    
-    We have an Issue: "{ISSUE_TITLE}"
-    
-    Two AI developers have proposed solutions:
-    
-    === SOLUTION A (by Qwen) ===
-    {plan_a}
-    
-    === SOLUTION B (by Gemini) ===
-    {plan_b}
-    
-    --- YOUR TASK ---
-    1. Compare Solution A and Solution B critically.
-    2. Analyze Logic, Security, Performance, and Code Style.
-    3. Decide the WINNER (A or B). If both are bad or dangerous, reject both.
-    4. Provide a DETAILED reasoning for the Pull Request description.
-    
-    --- OUTPUT FORMAT (Strict JSON) ---
-    You MUST output valid JSON only. Do not wrap in markdown code blocks. Structure:
-    {{
-        "analysis_a": "Detailed critique of A (pros/cons)",
-        "analysis_b": "Detailed critique of B (pros/cons)",
-        "comparison": "Why is one better than the other?",
-        "risk_level": "LOW", "MEDIUM", or "HIGH",
-        "human_review_required": boolean (true if HIGH risk or core logic change),
-        "winner": "A" or "B" or "NONE",
-        "rejection_reason": "If winner is NONE, explain why",
-        "final_solution_code": {{
-             "filename.ext": "FULL CORRECTED CODE CONTENT HERE"
-        }},
-        "pr_report_markdown": "A well-formatted markdown text summarizing the decision, suitable for PR body."
-    }}
-    """
-    
-    verdict_raw = call_gemini(arbitration_prompt, system_instruction="You are a JSON-speaking strict code arbitrator.")
-    
-    # 清理 Gemini 可能返回的 Markdown 标记 ```json ... ```
-    verdict_clean = verdict_raw.replace("```json", "").replace("```", "").strip()
-    
-    try:
-        verdict = json.loads(verdict_clean)
-    except json.JSONDecodeError:
-        print("❌ JSON 解析失败，仲裁者返回了非结构化数据。")
-        print(verdict_raw)
-        sys.exit(1)
-
-    # ————————————————————————————————————————————————
-    # 5. 执行仲裁结果
-    # ————————————————————————————————————————————————
-    
-    # 检查是否需要人工审查
-    if verdict.get("human_review_required") or verdict.get("risk_level") == "HIGH" or verdict.get("winner") == "NONE":
-        reason = verdict.get("rejection_reason") or verdict.get("comparison")
-        print(f"🛑 触发人工审查拦截: {reason}")
-        with open("human_review_needed.txt", "w", encoding="utf-8") as f:
-            f.write(reason)
-        sys.exit(0) # 退出脚本，后续 Workflow 步骤会处理
-
-    # 写入代码文件
-    print(f"🏆 获胜者: 方案 {verdict['winner']}")
-    changes = verdict.get("final_solution_code", {})
-    
-    if not changes:
-        print("⚠️ 获胜但未提供代码，转人工。")
-        with open("human_review_needed.txt", "w") as f: f.write("AI selected a winner but failed to output code structure.")
-        sys.exit(0)
-
-    for filename, content in changes.items():
-        # 简单的安全检查：防止写入 .github 目录
-        if ".github" in filename:
-            print(f"⚠️ 跳过写入敏感文件: {filename}")
-            continue
+      # ————————————————————————————————————————————————
+      # 分支路径 A：触发人工审查 (不创建 PR)
+      # ————————————————————————————————————————————————
+      - name: 🛑 拦截：需要人工审查
+        if: hashFiles('human_review_needed.txt') != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const reason = fs.readFileSync('human_review_needed.txt', 'utf8');
             
-        # 确保目录存在
-        os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else ".", exist_ok=True)
-        
-        print(f"✏️ 正在写入文件: {filename}")
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(content)
+            // 1. 在 Issue 中留言警告
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🛑 AI 拒绝自动修复\n\n**原因**: 检测到高风险操作或核心逻辑变更。\n\n\`\`\`\n${reason}\n\`\`\`\n\n> 系统已自动移除 \`auto-fix\` 标签并添加 \`needs-human-review\`。请人工介入。`
+            });
+            
+            // 2. 移除自动标签，添加人工标签
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: 'auto-fix'
+              });
+            } catch(e) {}
+            
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['needs-human-review']
+            });
 
-    # ————————————————————————————————————————————————
-    # 6. 生成详细报告 (用于 PR Body)
-    # ————————————————————————————————————————————————
-    report_content = f"""
-# 🤖 AI 仲裁修复报告
+      # ————————————————————————————————————————————————
+      # 分支路径 B：正常修复 (创建 PR)
+      # ————————————————————————————————————————————————
+      - name: 📝 创建修复 Pull Request
+        # 只有在没有触发人工审查且生成了报告时才运行
+        if: hashFiles('human_review_needed.txt') == '' && hashFiles('AI_REVIEW_REPORT.md') != ''
+        id: create-pr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          commit-message: "🤖 双AI修复: Issue #${{ github.event.issue.number }}"
+          branch: "auto-fix/issue-${{ github.event.issue.number }}"
+          delete-branch: true
+          title: "🤖 [AI仲裁] 修复 Issue #${{ github.event.issue.number }}"
+          # ✅ 这里直接读取 AI 生成的详细报告作为 PR 内容
+          body-path: AI_REVIEW_REPORT.md
+          labels: |
+            auto-fix
+            dual-ai-reviewed
+            automated-pr
 
-> **Issue**: #{ISSUE_NUMBER} {ISSUE_TITLE}
+      - name: 💬 通知修复结果
+        if: steps.create-pr.outputs.pull-request-number
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `✅ **双AI仲裁修复已完成！**\n\n- 🟦 通义千问 (方案A)\n- 🟩 Gemini (方案B)\n- ⚖️ **Gemini Leader 仲裁胜出**\n\n🔗 **查看修复 PR**: #${{ steps.create-pr.outputs.pull-request-number }}`
+            })
 
-## ⚖️ 仲裁结果
-- 🟦 **方案 A (Qwen)**: {verdict['analysis_a']}
-- 🟩 **方案 B (Gemini)**: {verdict['analysis_b']}
-
-### 🏆 最终裁决：方案 {verdict['winner']} 胜出
-
-**推理过程**:
-{verdict['comparison']}
-
-## 🛡️ 风险评估
-- **风险等级**: {verdict['risk_level']}
-- **人工复核**: {'需要' if verdict['human_review_required'] else '无需'}
-
----
-*Generated by Dual-AI Arbitration Workflow (Qwen + Gemini)*
-    """
-    
-    # 如果 JSON 中 AI 自己生成了更好的 Markdown，则优先使用
-    if verdict.get("pr_report_markdown"):
-         report_content = verdict["pr_report_markdown"] + "\n\n---\n*Automated by Dual-AI System*"
-
-    with open("AI_REVIEW_REPORT.md", "w", encoding="utf-8") as f:
-        f.write(report_content)
-    
-    print("✅ 修复脚本执行完成。")
-
-if __name__ == "__main__":
-    main()
+      - name: ❌ 失败兜底通知
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `❌ **AI 修复流程出错**\n可能是 API 超时或脚本崩溃。\n请检查 [Actions 日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+            })
