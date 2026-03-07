@@ -29,15 +29,15 @@ def robust_json_decode(text):
     """鲁棒性极强的 JSON 提取器，应对 AI 的各种乱码和 Markdown 标签"""
     if not text: return None
     try:
-        # 尝试清理 Markdown 代码块
-        text = re.sub(r'```[a-zA-Z]*\n?', '', text)
-        text = re.sub(r'\s*```', '', text)
+        # 清理 Markdown 代码块（含 ```json、```python 等各类标签）
+        cleaned = re.sub(r'```[a-zA-Z]*\s*\n?', '', text)
+        cleaned = re.sub(r'\n?\s*```', '', cleaned)
         # 寻找第一个 { 和最后一个 }
-        start = text.find('{')
-        end = text.rfind('}')
+        start = cleaned.find('{')
+        end = cleaned.rfind('}')
         if start != -1 and end != -1:
-            return json.loads(text[start:end+1])
-        return json.loads(text)
+            return json.loads(cleaned[start:end+1])
+        return json.loads(cleaned)
     except Exception as e:
         print(f"JSON 解析失败: {e}")
         return None
@@ -63,18 +63,27 @@ def get_context():
         except: pass
     return context
 
-def call_qwen(prompt):
+def call_qwen(prompt, is_json=False):
     url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    system_content = (
+        "You are a senior coder. Output ONLY valid JSON, no markdown, no explanation."
+        if is_json else "You are a senior coder. Provide full file fixes."
+    )
     headers = {"Authorization": f"Bearer {QWEN_API_KEY}", "Content-Type": "application/json"}
     data = {
         "model": QWEN_MODEL,
-        "messages":[{"role": "system", "content": "You are a senior coder. Provide full file fixes."},
-                     {"role": "user", "content": prompt}]
+        "messages":[{"role": "system", "content": system_content},
+                     {"role": "user", "content": prompt}],
     }
+    if is_json:
+        data["response_format"] = {"type": "json_object"}
     try:
         resp = requests.post(url, headers=headers, json=data, timeout=60)
+        resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
-    except: return None
+    except Exception as e:
+        print(f"Qwen 调用失败: {e}")
+        return None
 
 def call_gemini(prompt, is_json=False):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
@@ -140,16 +149,34 @@ def main():
         choice = cmd.group(1).upper()
         print(f"收到人工强制指令: {choice}")
         ctx = get_context()
-        prompt = f"Context:\n{ctx}\n\nIssue: {ISSUE_TITLE}\nApply fix using strategy {choice}. Output strictly JSON: {{\"path\": \"content\"}}"
-        
+        prompt = (
+            f"Context:\n{ctx}\n\n"
+            f"Issue: {ISSUE_TITLE}\n"
+            f"Apply fix using strategy {choice}.\n\n"
+            f"Output ONLY a flat JSON object where keys are file paths and values are the COMPLETE file content.\n"
+            f'Example: {{"src/main.py": "# full file content", "utils/helper.py": "# full content"}}\n'
+            f"Do NOT wrap in markdown. Do NOT add extra keys like \'files\', \'winner\', or any explanation."
+        )
+
         # 🐛 Bug 2 修复: 判断分支以对应正确模型
         if choice == "A":
-            raw = call_qwen(prompt)
+            raw = call_qwen(prompt, is_json=True)
         else:
             raw = call_gemini(prompt, is_json=True)
-            
+
         files = robust_json_decode(raw)
-        
+        # 自动解包 AI 返回的嵌套结构 {"files": {"path": "content"}}
+        if isinstance(files, dict) and "files" in files and isinstance(files.get("files"), dict):
+            files = files["files"]
+
+        # 若解析失败，用备用模型重试一次
+        if not files:
+            print(f"⚠️ 方案 {choice} JSON 解析失败，切换备用模型重试...")
+            retry_raw = call_gemini(prompt, is_json=True) if choice == "A" else call_qwen(prompt, is_json=True)
+            files = robust_json_decode(retry_raw)
+            if isinstance(files, dict) and "files" in files and isinstance(files.get("files"), dict):
+                files = files["files"]
+
         # 应用结果与回调
         success, msg = apply_code(files)
         if success:
