@@ -17,7 +17,7 @@ ISSUE_BODY = os.environ.get("ISSUE_BODY")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 
 # 修正后的模型标识符
-GEMINI_MODEL = "gemini-3-flash"  # 建议使用 flash，响应快且稳
+GEMINI_MODEL = "gemini-2.5-flash"  # 建议使用 flash，响应快且稳
 QWEN_MODEL = "qwen-turbo"
 
 # ——————————————————————————————————————————————————————————————————————
