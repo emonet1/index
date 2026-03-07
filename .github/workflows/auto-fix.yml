@@ -1,25 +1,24 @@
-name: 🤖 AI 自动修复
+name: 🤖 双AI仲裁自动修复
 
 on:
   issues:
-    types: [opened, reopened]
+    types: [opened, reopened, labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   ai-fix:
+    # 只有当 Issue 包含 'auto-fix' 标签时才运行
     if: contains(github.event.issue.labels.*.name, 'auto-fix')
     runs-on: ubuntu-latest
-    
-    # 强制开启权限声明
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
     
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
         with:
-          # 使用你的 PAT 确保可以创建并推送新分支
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           fetch-depth: 0
       
@@ -28,37 +27,83 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: 🤖 AI 分析并生成修复代码
-        id: ai-fix
+      - name: 📦 安装依赖
+        run: pip install requests
+      
+      # ————————————————————————————————————————————————
+      # 核心步骤：运行双AI脚本
+      # ————————————————————————————————————————————————
+      - name: 🤖 运行双AI仲裁脚本
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          # ⚠️ 注意这里改成了新的两个 Key
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
-        run: |
-          pip install requests
-          python .github/scripts/ai_fix.py
-      
-      - name: 📝 创建 Pull Request
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python .github/scripts/ai_fix.py
+
+      # ————————————————————————————————————————————————
+      # 分支路径 A：触发人工审查 (不创建 PR)
+      # ————————————————————————————————————————————————
+      - name: 🛑 拦截：需要人工审查
+        if: hashFiles('human_review_needed.txt') != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const reason = fs.readFileSync('human_review_needed.txt', 'utf8');
+            
+            // 1. 在 Issue 中留言警告
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🛑 AI 拒绝自动修复\n\n**原因**: 检测到高风险操作或核心逻辑变更。\n\n\`\`\`\n${reason}\n\`\`\`\n\n> 系统已自动移除 \`auto-fix\` 标签并添加 \`needs-human-review\`。请人工介入。`
+            });
+            
+            // 2. 移除自动标签，添加人工标签
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                name: 'auto-fix'
+              });
+            } catch(e) {}
+            
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['needs-human-review']
+            });
+
+      # ————————————————————————————————————————————————
+      # 分支路径 B：正常修复 (创建 PR)
+      # ————————————————————————————————————————————————
+      - name: 📝 创建修复 Pull Request
+        # 只有在没有触发人工审查且生成了报告时才运行
+        if: hashFiles('human_review_needed.txt') == '' && hashFiles('AI_REVIEW_REPORT.md') != ''
         id: create-pr
         uses: peter-evans/create-pull-request@v6
         with:
-          # ✅ 关键修改：使用 PAT 绕过所有 UI 权限限制
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-          commit-message: "🤖 AI 自动修复: Issue #${{ github.event.issue.number }}"
+          commit-message: "🤖 双AI修复: Issue #${{ github.event.issue.number }}"
           branch: "auto-fix/issue-${{ github.event.issue.number }}"
           delete-branch: true
-          title: "🤖 [AI-FIX] 修复 Issue #${{ github.event.issue.number }}"
-          body: |
-            ## 🤖 AI 自动修复报告
-            此 PR 由 AI 自动生成，用于修复 #${{ github.event.issue.number }}
-            Closes #${{ github.event.issue.number }}
+          title: "🤖 [AI仲裁] 修复 Issue #${{ github.event.issue.number }}"
+          # ✅ 这里直接读取 AI 生成的详细报告作为 PR 内容
+          body-path: AI_REVIEW_REPORT.md
           labels: |
             auto-fix
+            dual-ai-reviewed
             automated-pr
-      
-      - name: 💬 在 Issue 中评论
+
+      - name: 💬 通知修复结果
         if: steps.create-pr.outputs.pull-request-number
         uses: actions/github-script@v7
         with:
@@ -68,10 +113,10 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `✅ **AI 修复已完成！**\n\n🔗 修复 PR: #${{ steps.create-pr.outputs.pull-request-number }}`
+              body: `✅ **双AI仲裁修复已完成！**\n\n- 🟦 通义千问 (方案A)\n- 🟩 Gemini (方案B)\n- ⚖️ **Gemini Leader 仲裁胜出**\n\n🔗 **查看修复 PR**: #${{ steps.create-pr.outputs.pull-request-number }}`
             })
 
-      - name: ❌ 修复失败通知
+      - name: ❌ 失败兜底通知
         if: failure()
         uses: actions/github-script@v7
         with:
@@ -81,5 +126,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `❌ **AI 修复失败**\n请检查 [Actions 日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+              body: `❌ **AI 修复流程出错**\n可能是 API 超时或脚本崩溃。\n请检查 [Actions 日志](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
             })
