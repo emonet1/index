@@ -1,311 +1,245 @@
-#!/usr/bin/env python3
-"""
-双AI仲裁修复脚本 v3.0 (融合版)
-- 架构: Qwen-Max (方案A) + Gemini-Flash (方案B) -> Gemini-Leader (仲裁)
-- 功能: 自动解析Issue -> 风险评估 -> 双AI并行修复 -> 语法验证 -> 原位覆盖写入
-"""
 import os
-import re
-import requests
 import json
+import requests
 import sys
-import time
+import glob
 
-# ==================== 配置区 ====================
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GEMINI_KEY   = os.getenv("GEMINI_API_KEY")
-QWEN_KEY     = os.getenv("QWEN_API_KEY")
-ISSUE_NUMBER = os.getenv("ISSUE_NUMBER")
-ISSUE_BODY   = os.getenv("ISSUE_BODY", "")
-ISSUE_TITLE  = os.getenv("ISSUE_TITLE", "")
+# ——————————————————————————————————————————————————————————————————————
+# 配置与常量
+# ——————————————————————————————————————————————————————————————————————
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+QWEN_API_KEY = os.environ.get("QWEN_API_KEY")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
-# Gemini API 配置
-GEMINI_BASE  = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_MODEL = "gemini-2.0-flash"     # 执行者
-GEMINI_JUDGE = "gemini-1.5-pro"       # 仲裁者 (使用更聪明的模型)
+ISSUE_NUMBER = os.environ.get("ISSUE_NUMBER")
+ISSUE_TITLE = os.environ.get("ISSUE_TITLE")
+ISSUE_BODY = os.environ.get("ISSUE_BODY")
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 
-# 通义千问 API 配置
-QWEN_BASE    = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
-QWEN_MODEL   = "qwen-max"
+# 模型配置
+GEMINI_MODEL = "gemini-1.5-pro" # 使用 Pro 模型进行逻辑仲裁更强
+QWEN_MODEL = "qwen-turbo"       # 或 qwen-max
 
-# 服务目录映射 (保持原有的目录感知能力)
-SERVICE_DIRS = {
-    "pocketbase": "pb/pb_hooks",
-    "websocket": "websocket-server",
-    "ai-proxy": "ai-proxy"
-}
+# ——————————————————————————————————————————————————————————————————————
+# 工具函数
+# ——————————————————————————————————————————————————————————————————————
 
-# 敏感/重负荷关键词 (触发人工审查)
-CRITICAL_KEYWORDS = [
-    "database", "migration", "schema", "drop table", "alter table",
-    "auth", "password", "secret", "token", "login",
-    "payment", "billing",
-    "rm -rf", "sudo",
-    "architecture change"
-]
-# ================================================
-
-def log(message, level="INFO"):
-    icons = {"INFO": "ℹ️", "WARN": "⚠️", "ERROR": "❌", "OK": "✅", "AI": "🤖", "JUDGE": "⚖️"}
-    icon = icons.get(level, "")
-    print(f"[{level}] {icon} {message}", flush=True)
-
-# ================= 1. 核心解析逻辑 (保留自旧版) =================
-
-def parse_issue_content(issue_body, issue_title):
-    """从 Issue 中提取服务名、错误日志和代码文件"""
-    log("开始解析 Issue 内容...")
-    
-    # 1. 提取服务名称
-    service_name = "unknown"
-    service_match = re.search(r'\[AUTO-FIX\]\s+(\w+)', issue_title)
-    if service_match:
-        service_name = service_match.group(1).lower()
-    
-    # 2. 提取错误日志
-    error_log = ""
-    error_patterns = [
-        r'### 📋 错误日志[^\n]*\n```[^\n]*\n(.*?)\n```',
-        r'错误日志.*?\n```[^\n]*\n(.*?)\n```',
-    ]
-    for pattern in error_patterns:
-        match = re.search(pattern, issue_body, re.DOTALL)
-        if match:
-            error_log = match.group(1).strip()
-            break
-            
-    # 3. 提取代码文件
-    code_files = {}
-    file_pattern = r'#### `([^`]+)`\s*\n```(\w+)\s*\n(.*?)\n```'
-    matches = list(re.finditer(file_pattern, issue_body, re.DOTALL))
-    
-    for match in matches:
-        file_path = match.group(1).strip()
-        language = match.group(2).strip()
-        code = match.group(3).strip()
-        
-        if len(code) > 10 and "截断" not in code:
-            code_files[file_path] = {"language": language, "code": code}
-            log(f"提取文件: {file_path} ({language})")
-
-    return service_name, error_log, code_files
-
-def assess_risk(title, body):
-    """风险评估"""
-    text = (title + " " + body).lower()
-    hits = [kw for kw in CRITICAL_KEYWORDS if kw in text]
-    if hits:
-        return "CRITICAL", f"检测到敏感关键词: {hits}"
-    if "restart loop" in text or "崩溃" in text:
-        return "HEAVY", "检测到循环崩溃"
-    return "NORMAL", "常规错误"
-
-# ================= 2. AI 调用封装 =================
-
-def call_qwen(prompt):
-    """调用通义千问"""
-    if not QWEN_KEY:
-        log("QWEN_KEY 未设置", "WARN")
-        return None
-    try:
-        headers = {"Authorization": f"Bearer {QWEN_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": QWEN_MODEL,
-            "input": {"messages": [{"role": "user", "content": prompt}]},
-            "parameters": {"result_format": "message"}
-        }
-        resp = requests.post(QWEN_BASE, headers=headers, json=payload, timeout=90)
-        resp.raise_for_status()
-        return resp.json()["output"]["choices"][0]["message"]["content"]
-    except Exception as e:
-        log(f"Qwen 调用失败: {e}", "ERROR")
-        return None
-
-def call_gemini(prompt, model=GEMINI_MODEL):
-    """调用 Gemini"""
-    if not GEMINI_KEY:
-        log("GEMINI_KEY 未设置", "ERROR")
-        return None
-    try:
-        url = f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_KEY}"
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        resp = requests.post(url, json=payload, timeout=90)
-        resp.raise_for_status()
-        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        log(f"Gemini 调用失败: {e}", "ERROR")
-        return None
-
-def clean_code(text, lang):
-    """清理 AI 返回的代码"""
-    # 提取 Markdown 代码块
-    pattern = r'```(?:' + lang + r'|python|js|javascript)?\s*\n(.*?)\n```'
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    
-    # 如果没有代码块，尝试直接清洗
-    text = re.sub(r'^```.*?\n', '', text)
-    text = re.sub(r'\n```$', '', text)
-    return text.strip()
-
-def validate_code(code, language):
-    """语法验证"""
-    if 'python' in language or language == 'py':
+def get_project_files():
+    """获取当前目录下主要的 Python/JS/MD 文件内容，提供上下文"""
+    context = ""
+    # 简单遍历，限制大小以防 Token 溢出
+    files = glob.glob("**/*.py", recursive=True) + glob.glob("**/*.js", recursive=True)
+    for f in files[:5]: # 限制读取文件数量
+        if "node_modules" in f or "venv" in f: continue
         try:
-            compile(code, '<string>', 'exec')
-            return True, "语法正确"
-        except SyntaxError as e:
-            return False, f"Python SyntaxError: {e}"
-    # JS 简单检查
-    if 'script' in language or language == 'js':
-        if code.count('{') != code.count('}'):
-            return False, "JS 括号不匹配"
-    return True, "验证通过"
+            with open(f, 'r', encoding='utf-8') as file:
+                content = file.read()
+                if len(content) < 2000: # 只读取较小的文件
+                    context += f"\n--- File: {f} ---\n{content}\n"
+        except:
+            pass
+    return context
 
-# ================= 3. 仲裁核心逻辑 =================
+def call_qwen(prompt, system_prompt="You are a helpful coding assistant."):
+    """调用通义千问 API (OpenAI 兼容格式 或 DashScope 原生)"""
+    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {QWEN_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": QWEN_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=data, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"❌ Qwen API Error: {e}")
+        return "Error generating solution."
 
-def arbitrate_fix(file_path, original_code, error_log, language):
-    """对单个文件执行双AI修复与仲裁"""
-    log(f"正在修复: {file_path}...", "AI")
+def call_gemini(prompt, system_instruction=None):
+    """调用 Google Gemini API"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     
-    prompt_base = f"""
-    【任务】修复代码错误
-    【文件】{file_path}
-    【语言】{language}
-    【错误日志】
-    {error_log[:1500]}
+    # Gemini 1.5 支持 system_instruction
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2}
+    }
     
-    【原始代码】
-    {original_code}
-    
-    请输出修复后的完整代码。只输出代码，不要解释。
-    """
+    if system_instruction:
+        payload["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
-    # 1. 双AI 并行生成
-    log("请求 Qwen...", "AI")
-    sol_qwen = call_qwen(prompt_base)
-    
-    log("请求 Gemini...", "AI")
-    sol_gemini = call_gemini(prompt_base)
-    
-    if not sol_qwen and not sol_gemini:
-        return None, "所有 AI 均失败"
+    try:
+        resp = requests.post(url, json=payload, timeout=60)
+        resp.raise_for_status()
+        result = resp.json()
+        return result['candidates'][0]['content']['parts'][0]['text']
+    except Exception as e:
+        print(f"❌ Gemini API Error: {e}")
+        if resp.text: print(f"Details: {resp.text}")
+        return "Error generating solution."
 
-    # 2. Gemini Leader 仲裁
-    log("Gemini Leader 正在仲裁...", "JUDGE")
-    judge_prompt = f"""
-    你是首席架构师。针对文件 {file_path} 的错误，两个 AI 提供了方案。
-    
-    【原始错误】{error_log[:500]}
-    
-    【方案 A (Qwen)】
-    {sol_qwen if sol_qwen else "未响应"}
-    
-    【方案 B (Gemini)】
-    {sol_gemini if sol_gemini else "未响应"}
-    
-    请：
-    1. 评估哪个方案更安全、更有效。
-    2. 如果两个都有问题，请基于两者重写最优代码。
-    3. 输出最终代码和简短理由。
-    
-    输出格式要求：
-    Reason: [一句话理由]
-    Code:
-    ```
-    [最终代码]
-    ```
-    """
-    
-    verdict = call_gemini(judge_prompt, model=GEMINI_JUDGE)
-    if not verdict:
-        verdict = sol_gemini or sol_qwen # 降级处理
-    
-    # 提取最终代码
-    final_code = clean_code(verdict, language)
-    
-    # 验证
-    is_valid, msg = validate_code(final_code, language)
-    if not is_valid:
-        log(f"仲裁代码验证失败: {msg}", "ERROR")
-        # 尝试回退到方案B或A
-        if sol_gemini and validate_code(clean_code(sol_gemini, language), language)[0]:
-            return clean_code(sol_gemini, language), "仲裁失败，回退到 Gemini 方案"
-        return None, f"修复失败: {msg}"
-        
-    return final_code, verdict
-
-# ================= 主程序 =================
+# ——————————————————————————————————————————————————————————————————————
+# 主逻辑
+# ——————————————————————————————————————————————————————————————————————
 
 def main():
-    log("=" * 50)
-    log("🤖 双AI仲裁修复系统 v3.0 启动")
-    log("=" * 50)
+    print(f"🚀 开始处理 Issue #{ISSUE_NUMBER}: {ISSUE_TITLE}")
+    
+    # 1. 获取代码上下文
+    code_context = get_project_files()
+    
+    # 2. 构建基础提示词
+    base_prompt = f"""
+    Context (Project Files Snippets):
+    {code_context}
+    
+    The Issue:
+    Title: {ISSUE_TITLE}
+    Description: {ISSUE_BODY}
+    
+    Task:
+    Provide a fix for this issue. 
+    1. Analyze the problem.
+    2. Provide the corrected full code for the specific file(s).
+    3. Explain your changes briefly.
+    """
 
-    if not ISSUE_BODY:
-        log("没有 Issue 内容，退出", "ERROR")
+    # ————————————————————————————————————————————————
+    # 3. 双 AI 生成方案
+    # ————————————————————————————————————————————————
+    print("🤖 正在请求 Qwen 生成方案 (Plan A)...")
+    plan_a = call_qwen(base_prompt, system_prompt="You are an expert Python developer. Provide a robust fix.")
+    
+    print("🤖 正在请求 Gemini 生成方案 (Plan B)...")
+    plan_b = call_gemini(base_prompt, system_instruction="You are a senior code reviewer and developer. Provide a clean, secure fix.")
+
+    # ————————————————————————————————————————————————
+    # 4. Gemini 仲裁 (Leader Role)
+    # ————————————————————————————————————————————————
+    print("⚖️ 进入仲裁阶段 (Gemini Leader)...")
+    
+    arbitration_prompt = f"""
+    You are the Chief Technology Officer (CTO) and final arbitrator.
+    
+    We have an Issue: "{ISSUE_TITLE}"
+    
+    Two AI developers have proposed solutions:
+    
+    === SOLUTION A (by Qwen) ===
+    {plan_a}
+    
+    === SOLUTION B (by Gemini) ===
+    {plan_b}
+    
+    --- YOUR TASK ---
+    1. Compare Solution A and Solution B critically.
+    2. Analyze Logic, Security, Performance, and Code Style.
+    3. Decide the WINNER (A or B). If both are bad or dangerous, reject both.
+    4. Provide a DETAILED reasoning for the Pull Request description.
+    
+    --- OUTPUT FORMAT (Strict JSON) ---
+    You MUST output valid JSON only. Do not wrap in markdown code blocks. Structure:
+    {{
+        "analysis_a": "Detailed critique of A (pros/cons)",
+        "analysis_b": "Detailed critique of B (pros/cons)",
+        "comparison": "Why is one better than the other?",
+        "risk_level": "LOW", "MEDIUM", or "HIGH",
+        "human_review_required": boolean (true if HIGH risk or core logic change),
+        "winner": "A" or "B" or "NONE",
+        "rejection_reason": "If winner is NONE, explain why",
+        "final_solution_code": {{
+             "filename.ext": "FULL CORRECTED CODE CONTENT HERE"
+        }},
+        "pr_report_markdown": "A well-formatted markdown text summarizing the decision, suitable for PR body."
+    }}
+    """
+    
+    verdict_raw = call_gemini(arbitration_prompt, system_instruction="You are a JSON-speaking strict code arbitrator.")
+    
+    # 清理 Gemini 可能返回的 Markdown 标记 ```json ... ```
+    verdict_clean = verdict_raw.replace("```json", "").replace("```", "").strip()
+    
+    try:
+        verdict = json.loads(verdict_clean)
+    except json.JSONDecodeError:
+        print("❌ JSON 解析失败，仲裁者返回了非结构化数据。")
+        print(verdict_raw)
         sys.exit(1)
 
-    # 1. 风险评估
-    risk, reason = assess_risk(ISSUE_TITLE, ISSUE_BODY)
-    log(f"风险等级: {risk} | {reason}")
+    # ————————————————————————————————————————————————
+    # 5. 执行仲裁结果
+    # ————————————————————————————————————————————————
     
-    if risk in ["CRITICAL", "HEAVY"]:
+    # 检查是否需要人工审查
+    if verdict.get("human_review_required") or verdict.get("risk_level") == "HIGH" or verdict.get("winner") == "NONE":
+        reason = verdict.get("rejection_reason") or verdict.get("comparison")
+        print(f"🛑 触发人工审查拦截: {reason}")
         with open("human_review_needed.txt", "w", encoding="utf-8") as f:
-            f.write(f"Level: {risk}\nReason: {reason}")
-        log("触发人工审查，停止自动修复", "WARN")
+            f.write(reason)
+        sys.exit(0) # 退出脚本，后续 Workflow 步骤会处理
+
+    # 写入代码文件
+    print(f"🏆 获胜者: 方案 {verdict['winner']}")
+    changes = verdict.get("final_solution_code", {})
+    
+    if not changes:
+        print("⚠️ 获胜但未提供代码，转人工。")
+        with open("human_review_needed.txt", "w") as f: f.write("AI selected a winner but failed to output code structure.")
         sys.exit(0)
 
-    # 2. 解析 Issue
-    service_name, error_log, code_files = parse_issue_content(ISSUE_BODY, ISSUE_TITLE)
-    if not code_files:
-        log("未找到代码文件，无法修复", "ERROR")
-        sys.exit(1)
-
-    # 3. 遍历修复
-    fixed_files = {}
-    report_content = f"# 🤖 AI 修复报告\nIssue: #{ISSUE_NUMBER}\n\n"
-    
-    for path, info in code_files.items():
-        code, justification = arbitrate_fix(path, info['code'], error_log, info['language'])
-        
-        if code:
-            fixed_files[path] = code
-            report_content += f"## 文件: `{path}`\n\n**仲裁结果**: \n{justification[:500]}...\n\n---\n"
-        else:
-            report_content += f"## 文件: `{path}`\n\n❌ 修复失败\n\n---\n"
-
-    # 4. 写入文件 (原位覆盖)
-    service_dir = SERVICE_DIRS.get(service_name, service_name)
-    write_count = 0
-    
-    for path, code in fixed_files.items():
-        # 组合完整路径：如果是已知服务，加上前缀；否则假设是相对路径
-        # 注意：这里需要根据实际仓库结构微调，这里假设 issue 里的 path 是相对路径
-        if service_name != "unknown" and not path.startswith(service_dir):
-            full_path = os.path.join(service_dir, path)
-        else:
-            full_path = path
+    for filename, content in changes.items():
+        # 简单的安全检查：防止写入 .github 目录
+        if ".github" in filename:
+            print(f"⚠️ 跳过写入敏感文件: {filename}")
+            continue
             
-        try:
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(code)
-            log(f"已写入: {full_path}", "OK")
-            write_count += 1
-        except Exception as e:
-            log(f"写入失败 {full_path}: {e}", "ERROR")
+        # 确保目录存在
+        os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else ".", exist_ok=True)
+        
+        print(f"✏️ 正在写入文件: {filename}")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(content)
 
-    # 5. 保存报告供 PR 使用
+    # ————————————————————————————————————————————————
+    # 6. 生成详细报告 (用于 PR Body)
+    # ————————————————————————————————————————————————
+    report_content = f"""
+# 🤖 AI 仲裁修复报告
+
+> **Issue**: #{ISSUE_NUMBER} {ISSUE_TITLE}
+
+## ⚖️ 仲裁结果
+- 🟦 **方案 A (Qwen)**: {verdict['analysis_a']}
+- 🟩 **方案 B (Gemini)**: {verdict['analysis_b']}
+
+### 🏆 最终裁决：方案 {verdict['winner']} 胜出
+
+**推理过程**:
+{verdict['comparison']}
+
+## 🛡️ 风险评估
+- **风险等级**: {verdict['risk_level']}
+- **人工复核**: {'需要' if verdict['human_review_required'] else '无需'}
+
+---
+*Generated by Dual-AI Arbitration Workflow (Qwen + Gemini)*
+    """
+    
+    # 如果 JSON 中 AI 自己生成了更好的 Markdown，则优先使用
+    if verdict.get("pr_report_markdown"):
+         report_content = verdict["pr_report_markdown"] + "\n\n---\n*Automated by Dual-AI System*"
+
     with open("AI_REVIEW_REPORT.md", "w", encoding="utf-8") as f:
         f.write(report_content)
-        
-    if write_count > 0:
-        log(f"成功修复 {write_count} 个文件", "OK")
-    else:
-        log("未能写入任何修复", "ERROR")
-        sys.exit(1)
+    
+    print("✅ 修复脚本执行完成。")
 
 if __name__ == "__main__":
     main()
