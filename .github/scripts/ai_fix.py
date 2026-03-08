@@ -18,9 +18,9 @@ ISSUE_BODY = os.environ.get("ISSUE_BODY")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 COMMENT_BODY = os.environ.get("COMMENT_BODY", "")
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_FALLBACK_MODELS = [
-    m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-2.5-flash,gemini-1.5-pro").split(",")
+    m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash,gemini-1.5-pro").split(",")
     if m.strip()
 ]
 QWEN_MODEL = "qwen-turbo"
