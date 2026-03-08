@@ -1,4 +1,3 @@
-// 修复后的代码
 try {
     const data = getData(); // 假设这是获取数据的函数
     if (data && Array.isArray(data)) {
