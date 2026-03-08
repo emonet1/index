@@ -18,7 +18,7 @@ ISSUE_BODY = os.environ.get("ISSUE_BODY")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 COMMENT_BODY = os.environ.get("COMMENT_BODY", "")
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 QWEN_MODEL = "qwen-turbo"
 
 # ==========================================
