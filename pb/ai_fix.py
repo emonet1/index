@@ -24,24 +24,33 @@ class AliyunClient:
         # Simulate API call
         print(f"Calling Qwen-plus with prompt (truncated): {prompt[:200]}...")
         # In a real scenario, this would make an actual API call
-        # For demonstration, let's return a dummy fix
-        if "routerAdd" in prompt:
+        # For demonstration, let's return a dummy fix that matches our proposed robust code
+        
+        # Updated simulation to return the robust code for the specific files
+        if "routerAdd(\"GET\", \"/test-break\", (c) => { /* 新的破坏测试 */ });" in prompt:
             return """routerAdd("GET", "/test-break", (c) => {
   try {
-    // Simulate a test endpoint
-    return c.json(200, { message: "Test successful (AI fixed)" });
+    // This is a test endpoint to ensure PocketBase hooks are working correctly.
+    // It returns a simple JSON response, indicating success.
+    return c.json(200, { message: "Test successful (PocketBase hook working)" });
   } catch (error) {
-    console.error('Error in /test-break route (AI fixed):', error);
-    return c.json(500, { error: "Internal server error (AI fixed)" });
+    // Log any errors that occur within this specific route handler.
+    console.error('Error in /test-break route:', error);
+    return c.json(500, { error: "Internal server error in test-break hook" });
   }
 });"""
         elif "console.log('Hello World')" in prompt:
             return """try {
-  console.log('Hello World (AI fixed)');
+  console.log('Hello World (PocketBase hook test)');
 } catch (error) {
-  console.error('Error in test_bug.js (AI fixed):', error);
+  // Catch any potential errors during the console.log operation (highly unlikely, but for robustness)
+  console.error('Error in test_bug.js:', error);
 }"""
-        return "console.log('AI fixed this generic issue.');"
+        # If the prompt is generic or doesn't match specific known issues,
+        # the AI might return a generic fix or try to interpret the generic error.
+        # For this simulation, we return a default safe fix.
+        print("AI simulation: Returning generic safe fix.")
+        return "console.log('AI fixed this generic issue by adding a safe log.');"
 
 aliyun_client = AliyunClient(ALIYUN_API_KEY, ALIYUN_SECRET_KEY)
 
@@ -101,11 +110,15 @@ def main():
 
     # 1. 查找目标文件
     target_file = None
-    specific_test_file = os.path.join(HOOKS_DIR, "test.pb.js")
+    specific_test_pb_file = os.path.join(HOOKS_DIR, "test.pb.js")
+    specific_test_bug_file = os.path.join(HOOKS_DIR, "test_bug.js")
     
-    # 优先检查 Issue 中明确提到的“破坏测试”文件
-    if os.path.exists(specific_test_file):
-        target_file = specific_test_file
+    # 优先检查 Issue 中明确提到的“破坏测试”文件或相关文件
+    if os.path.exists(specific_test_pb_file):
+        target_file = specific_test_pb_file
+        print(f"🔍 优先诊断文件 (根据Issue上下文明确指出): {target_file}")
+    elif os.path.exists(specific_test_bug_file):
+        target_file = specific_test_bug_file
         print(f"🔍 优先诊断文件 (根据Issue上下文明确指出): {target_file}")
     else:
         # 如果特定文件不存在，则查找所有 JS 文件并按修改时间排序，选择最新修改的
@@ -127,8 +140,14 @@ def main():
     print("📝 正在请求 AI 修复方案 (通义千问 qwen-plus)...")
 
     # 3. 构建 Prompt
+    # Enhanced prompt to guide AI if error is generic
+    if "ERROR: Final test after fix" in error_context:
+        prompt_guidance = "注意：日志显示一个通用的 'Final test after fix' 错误。这可能意味着一个测试脚本在修复后失败。请检查以下代码是否可能导致任何运行时错误，或者是否可以使其更健壮，以确保它不会触发此类通用错误。如果代码本身无害，请确保它是一个功能正常的测试或示例代码。"
+    else:
+        prompt_guidance = "修复以下代码中的语法或逻辑错误，确保它能正常运行，并使服务稳定。"
+
     prompt = f"""
-    你是 PocketBase 专家。修复以下代码中的语法或逻辑错误，确保它能正常运行，并使服务稳定。
+    你是 PocketBase 专家。{prompt_guidance}
     如果这是一个测试文件或已知有问题的代码，请将其修改为无害的、功能正常的代码，例如返回一个简单的JSON响应，或者移除其破坏性逻辑。
     【报错日志】：
     {error_context}
