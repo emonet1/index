@@ -1,0 +1,46 @@
+name: PR Email Notification
+
+# 当有新的 Pull Request 被创建或重新打开时触发
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send PR Notification Email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          # SMTP 服务器配置
+          # 如果你用 163 邮箱，请保持 smtp.163.com；如果是 Gmail，请改成 smtp.gmail.com
+          server_address: smtp.163.com 
+          server_port: 465
+          secure: true
+          
+          # 自动读取我们在 Settings 里配置的账号密码
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          
+          # 邮件标题和发件人
+          subject: "【代码审核通知】AI 提交了新的 PR #${{ github.event.pull_request.number }}"
+          from: "GitHub 机器人"
+          
+          # 收件人邮箱（填你平时手机上用来接收邮件的那个邮箱地址，也可以直接填 ${{ secrets.MAIL_USERNAME }} 发给自己）
+          to: ${{ secrets.MAIL_USERNAME }} 
+          
+          # 邮件正文（HTML 格式）
+          html_body: |
+            <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; border: 1px solid #e1e4e8; border-radius: 6px;">
+              <h2 style="color: #24292e;">🤖 AI 刚刚提交了修复代码！</h2>
+              <p><strong>PR 标题:</strong> ${{ github.event.pull_request.title }}</p>
+              <p><strong>代码修��数:</strong> 请点击下方链接查看具体变更。</p>
+              <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+              <p>请点击下方按钮直接前往 GitHub 进行代码审核并完成合并：</p>
+              <br>
+              <a href="${{ github.event.pull_request.html_url }}" style="display: inline-block; padding: 12px 24px; background-color: #2ea44f; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+                🔍 前往审核并合并代码 (Merge PR)
+              </a>
+              <br><br>
+              <p style="font-size: 12px; color: #6a737d;">此邮件由 GitHub Actions 自动发送自 emonet1/index 仓库</p>
+            </div>
