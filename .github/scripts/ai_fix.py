@@ -1,391 +1,453 @@
-import os
-import json
-import requests
-import sys
 import glob
+import json
+import os
 import re
+from typing import Dict, List, Optional, Tuple
 
-# ==========================================
-# 1. 配置与环境变量
-# ==========================================
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-QWEN_API_KEY = os.environ.get("QWEN_API_KEY")
+import requests
+
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
 ISSUE_NUMBER = os.environ.get("ISSUE_NUMBER")
-ISSUE_TITLE = os.environ.get("ISSUE_TITLE")
-ISSUE_BODY = os.environ.get("ISSUE_BODY")
+ISSUE_TITLE = os.environ.get("ISSUE_TITLE", "")
+ISSUE_BODY = os.environ.get("ISSUE_BODY", "")
 REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 COMMENT_BODY = os.environ.get("COMMENT_BODY", "")
 
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_FALLBACK_MODELS = [
-    m.strip() for m in os.environ.get("GEMINI_FALLBACK_MODELS", "gemini-2.0-flash,gemini-1.5-pro").split(",")
-    if m.strip()
-]
-QWEN_MODEL = "qwen-turbo"
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
+OPENAI_REVIEW_MODEL = os.environ.get("OPENAI_REVIEW_MODEL", OPENAI_MODEL)
+OPENAI_API_URL = os.environ.get("OPENAI_API_URL", "https://api.openai.com/v1/responses")
+OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "").strip()
+OPENAI_MAX_PROMPT_CHARS = int(os.environ.get("OPENAI_MAX_PROMPT_CHARS", "120000"))
 
-# ==========================================
-# 2. 工具函数
-# ==========================================
-def robust_json_decode(text):
-    """多层 JSON 提取，兼容 AI 的不同输出格式。"""
+CONTEXT_EXTENSIONS = ("py", "js", "go", "ts", "yml", "yaml", "html", "sh", "java", "cpp")
+SKIP_PATH_PARTS = (".git", "node_modules", "venv", "__pycache__", "dist", "build")
+MAX_CONTEXT_FILES = int(os.environ.get("MAX_CONTEXT_FILES", "15"))
+MAX_CONTEXT_FILE_SIZE = int(os.environ.get("MAX_CONTEXT_FILE_SIZE", "8000"))
+
+CODEX_SYSTEM_PROMPT = (
+    "You are Codex, OpenAI's coding agent. "
+    "Be precise, conservative, and repository-aware. "
+    "When asked for JSON, return valid JSON only with no markdown fencing."
+)
+
+
+def robust_json_decode(text: Optional[str]) -> Optional[Dict[str, object]]:
+    """Decode model output into a JSON object."""
     if not text:
         return None
-    # 第 1 层：直接尝试 JSON 解析
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    # 第 2 层：去掉 Markdown 代码块后再解析
-    try:
-        cleaned = re.sub(r'```[a-zA-Z]*\n?', '', text)
-        cleaned = re.sub(r'\n?```', '', cleaned).strip()
-        return json.loads(cleaned)
-    except Exception:
-        pass
-    # 第 3 层：截取首个 { 到最后一个 } 的片段解析
-    try:
-        start = text.find('{')
-        end = text.rfind('}')
-        if start != -1 and end != -1 and end > start:
-            return json.loads(text[start:end+1])
-    except Exception as e:
-        print(f"JSON 解析失败（第 3 层）: {e}")
+
+    candidates = [text]
+
+    cleaned = re.sub(r"```[a-zA-Z0-9_-]*\n?", "", text)
+    cleaned = re.sub(r"\n?```", "", cleaned).strip()
+    if cleaned != text:
+        candidates.append(cleaned)
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(text[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return data
+
     return None
 
-def get_context():
-    """获取项目上下文，限制扫描数量以防止 Token 过长。"""
-    context = ""
-    files = []
-    for ext in ["py", "js", "go", "ts", "yml", "yaml", "html", "sh", "java", "cpp"]:
+
+def get_context() -> str:
+    """Collect a bounded amount of repository context for the model prompt."""
+    context_parts: List[str] = []
+    files: List[str] = []
+
+    for ext in CONTEXT_EXTENSIONS:
         files.extend(glob.glob(f"**/*.{ext}", recursive=True))
 
-    count = 0
-    for f in sorted(files):
-        if any(x in f for x in [".git", "node_modules", "venv", "__pycache__", "dist", "build"]):
+    for path in sorted(files):
+        if any(part in path for part in SKIP_PATH_PARTS):
             continue
-        if count >= 15:
-            break
         try:
-            with open(f, 'r', encoding='utf-8') as file:
-                content = file.read()
-                if 0 < len(content) < 8000:
-                    context += f"\n--- File: {f} ---\n{content}\n"
-                    count += 1
+            with open(path, "r", encoding="utf-8") as handle:
+                content = handle.read()
         except Exception:
-            pass
-    return context
+            continue
 
-def call_qwen(prompt):
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {QWEN_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": QWEN_MODEL,
-        "messages": [
-            {"role": "system", "content": "You are a senior software engineer. Always respond with valid JSON only, no markdown, no explanation outside JSON."},
-            {"role": "user", "content": prompt}
-        ]
-    }
-    try:
-        resp = requests.post(url, headers=headers, json=data, timeout=90)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"Qwen 调用失败: {e}")
-        return None
+        if not content or len(content) >= MAX_CONTEXT_FILE_SIZE:
+            continue
 
-def _extract_gemini_text(resp_json):
-    candidates = resp_json.get("candidates") or []
-    for candidate in candidates:
-        content = candidate.get("content") or {}
-        parts = content.get("parts") or []
-        text_parts = []
-        for part in parts:
-            if isinstance(part, dict) and part.get("text"):
-                text_parts.append(part["text"])
-        if text_parts:
-            return "".join(text_parts)
+        context_parts.append(f"\n--- File: {path} ---\n{content}\n")
+        if len(context_parts) >= MAX_CONTEXT_FILES:
+            break
+
+    return "".join(context_parts)
+
+
+def _truncate_prompt(prompt: str) -> str:
+    if len(prompt) > OPENAI_MAX_PROMPT_CHARS:
+        print(f"Prompt truncated: {len(prompt)} -> {OPENAI_MAX_PROMPT_CHARS}")
+        return prompt[:OPENAI_MAX_PROMPT_CHARS]
+    return prompt
+
+
+def _extract_openai_text(response_json: dict) -> Optional[str]:
+    output_text = response_json.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    if isinstance(output_text, list):
+        joined = "".join(part for part in output_text if isinstance(part, str))
+        if joined.strip():
+            return joined
+
+    texts: List[str] = []
+    for item in response_json.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        for content_part in item.get("content") or []:
+            if not isinstance(content_part, dict):
+                continue
+            if content_part.get("type") == "output_text" and content_part.get("text"):
+                texts.append(content_part["text"])
+            elif content_part.get("type") == "refusal" and content_part.get("refusal"):
+                texts.append(content_part["refusal"])
+
+    if texts:
+        return "".join(texts)
+
+    error = response_json.get("error")
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"])
+
     return None
 
-def call_gemini(prompt, is_json=False):
-    if not GEMINI_API_KEY:
-        print("Gemini 调用失败: GEMINI_API_KEY 未设置")
+
+def call_codex(prompt: str, *, model: str, expect_json: bool = False) -> Optional[str]:
+    if not OPENAI_API_KEY:
+        print("Codex call skipped: OPENAI_API_KEY is not set.")
         return None
 
-    max_prompt_chars = int(os.environ.get("GEMINI_MAX_PROMPT_CHARS", "120000"))
-    if len(prompt) > max_prompt_chars:
-        print(f"Gemini 提示词过长，已截断: {len(prompt)} -> {max_prompt_chars}")
-        prompt = prompt[:max_prompt_chars]
+    prompt = _truncate_prompt(prompt)
 
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2}
+        "model": model,
+        "instructions": CODEX_SYSTEM_PROMPT,
+        "input": prompt,
+        "text": {"format": {"type": "text"}},
     }
-    if is_json:
-        # Gemini 接口要求这里使用驼峰字段名
-        payload["generationConfig"]["responseMimeType"] = "application/json"
+    if OPENAI_REASONING_EFFORT:
+        payload["reasoning"] = {"effort": OPENAI_REASONING_EFFORT}
 
-    models = [GEMINI_MODEL] + [m for m in GEMINI_FALLBACK_MODELS if m != GEMINI_MODEL]
-    api_versions = ["v1beta", "v1"]
-    last_error = "未知错误"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-    for model in models:
-        for api_version in api_versions:
-            url = f"https://generativelanguage.googleapis.com/{api_version}/models/{model}:generateContent?key={GEMINI_API_KEY}"
-            try:
-                resp = requests.post(
-                    url,
-                    headers={"Content-Type": "application/json"},
-                    json=payload,
-                    timeout=90
-                )
-            except Exception as e:
-                last_error = str(e)
-                print(f"Gemini 调用失败 (model={model}, api={api_version}): {e}")
-                continue
-
-            if resp.status_code >= 400:
-                body_preview = (resp.text or "")[:800].replace("\n", " ")
-                last_error = f"HTTP {resp.status_code}: {body_preview}"
-                print(f"Gemini 调用失败 (model={model}, api={api_version}) -> {last_error}")
-                continue
-
-            try:
-                data = resp.json()
-            except Exception as e:
-                body_preview = (resp.text or "")[:500].replace("\n", " ")
-                last_error = f"Gemini 返回非 JSON: {e}, body={body_preview}"
-                print(f"Gemini 调用失败 (model={model}, api={api_version}): {last_error}")
-                continue
-
-            text = _extract_gemini_text(data)
-            if text:
-                return text
-
-            prompt_feedback = data.get("promptFeedback") or {}
-            block_reason = prompt_feedback.get("blockReason")
-            if block_reason:
-                last_error = f"被拦截: {block_reason}"
-                print(f"Gemini 响应被拦截 (model={model}, api={api_version}): {block_reason}")
-                continue
-
-            last_error = f"响应中未包含文本: {str(data)[:500]}"
-            print(f"Gemini 调用失败 (model={model}, api={api_version}): {last_error}")
-
-    print(f"Gemini 全部尝试失败: {last_error}")
-    return None
-def post_comment(text):
-    url = f"https://api.github.com/repos/{REPO_NAME}/issues/{ISSUE_NUMBER}/comments"
-    headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
     try:
-        requests.post(url, headers=headers, json={"body": text})
-    except Exception as e:
-        print(f"评论发布失败: {e}")
+        response = requests.post(OPENAI_API_URL, headers=headers, json=payload, timeout=90)
+    except Exception as exc:
+        print(f"Codex request failed: {exc}")
+        return None
 
-def apply_code(files_dict):
-    """
-    安全地将 AI 返回代码写入本地文件。
-    期望格式: {"真实相对路径": "完整文件内容", ...}
-    返回: (是否成功, 说明信息)
-    """
-    if not files_dict:
-        return False, "未在 AI 响应中找到有效代码载荷（为空或 JSON 无效）。"
+    if response.status_code >= 400:
+        preview = (response.text or "")[:800].replace("\n", " ")
+        print(f"Codex request failed: HTTP {response.status_code}: {preview}")
+        return None
 
-    # 检测是否是错误的占位符格式 {"path": "...", "content": "..."}
-    if "path" in files_dict and "content" in files_dict and len(files_dict) == 2:
-        # AI 把模板字段名当成真实字段，尝试自动修复
-        real_path = files_dict.get("path", "").strip()
-        real_content = files_dict.get("content", "").strip()
-        if real_path and real_content and "/" in real_path:
-            print(f"检测到占位符格式，已自动修复: path={real_path}")
-            files_dict = {real_path: real_content}
-        else:
-            return False, f"AI 返回了错误的占位符格式 {{\"path\": ..., \"content\": ...}}，无法识别真实文件路径。原始 path 值: '{real_path}'"
+    try:
+        response_json = response.json()
+    except Exception as exc:
+        preview = (response.text or "")[:500].replace("\n", " ")
+        print(f"Codex response decode failed: {exc}; body={preview}")
+        return None
 
-    applied_count = 0
-    filtered_count = 0
-    skipped_paths = []
+    text = _extract_openai_text(response_json)
+    if text:
+        return text
 
-    for path, content in files_dict.items():
-        # 安全检查：禁止 AI 修改工作流配置
-        if ".github" in path:
-            filtered_count += 1
-            skipped_paths.append(path)
-            print(f"安全过滤: {path}")
-            continue
-        # 路径安全检查：阻止路径穿越
-        if path.startswith("/") or ".." in path:
-            filtered_count += 1
-            skipped_paths.append(path)
-            print(f"路径穿越拦截: {path}")
-            continue
-        try:
-            dir_name = os.path.dirname(path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"写入成功: {path}")
-            applied_count += 1
-        except Exception as e:
-            print(f"写入失败 {path}: {e}")
+    print(f"Codex response did not contain usable text: {str(response_json)[:500]}")
+    return None
 
-    if applied_count > 0:
-        return True, f"成功写入 {applied_count} 个文件。"
-    elif filtered_count > 0:
-        return False, f"{filtered_count} 个文件均被安全策略拦截（路径: {', '.join(skipped_paths)}）。"
-    else:
-        return False, "没有任何文件被写入。"
 
-# ==========================================
-# 3. 主流程逻辑
-# ==========================================
-def main():
-    # 检测人工一键修复指令 (/apply A | /apply B | /apply HYBRID)
-    cmd = re.search(r'/apply\s+(A|B|HYBRID)', COMMENT_BODY, re.IGNORECASE)
-
-    if cmd:
-        choice = cmd.group(1).upper()
-        print(f"收到人工强制指令: /apply {choice}")
-        ctx = get_context()
-
-        # 修复点：明确 JSON 输出格式，避免 AI 返回占位符
-        prompt = f"""You are fixing a bug reported in a GitHub Issue.
-
-Issue Title: {ISSUE_TITLE}
-
-Project Context:
-{ctx}
-
-Task: Apply fix strategy "{choice}". 
-Output ONLY a valid JSON object where:
-- Keys are REAL relative file paths (e.g. "pb/pb_hooks/fatal_error.js")  
-- Values are the COMPLETE new file contents as strings
-
-Example of correct output format:
-{{
-  "pb/pb_hooks/fatal_error.js": "// complete fixed file content here\\nconst x = 1;",
-  "pb/some_other_file.js": "// another file content"
-}}
-
-Do NOT use placeholder keys like "path" or "content". Use actual file paths."""
-
-        # 修复点：/apply A 调用 Qwen，/apply B 调用 Gemini
-        if choice == "A":
-            raw = call_qwen(prompt)
-            model_used = "Qwen"
-        else:
-            raw = call_gemini(prompt, is_json=True)
-            model_used = "Gemini"
-
-        print(f"[{model_used}] 原始返回:\n{raw[:500] if raw else 'None'}")
-
-        files = robust_json_decode(raw)
-        print(f"解析后 files_dict: {list(files.keys()) if files else 'None'}")
-
-        success, msg = apply_code(files)
-        if success:
-            post_comment(f"✅ **指令执行成功**：已应用方案 **{choice}**（{model_used}），正在为您准备 Pull Request。\n\n> {msg}")
-            with open("FIX_DONE", "w") as f:
-                f.write("SUCCESS")
-        else:
-            raw_preview = str(raw)[:300] if raw else "无响应"
-            post_comment(f"执行失败：{msg}\n\n> 模型: {model_used}\n> 原始返回片段: `{raw_preview}`")
+def post_comment(text: str) -> None:
+    if not (REPO_NAME and ISSUE_NUMBER and GITHUB_TOKEN):
+        print("Skip posting GitHub comment: required env vars are missing.")
         return
 
-    # ==========================================
-    # 自动流程：双 AI 方案生成 + Gemini 仲裁
-    # ==========================================
-    print("启动 AI 对抗生成流程...")
-    ctx = get_context()
+    url = f"https://api.github.com/repos/{REPO_NAME}/issues/{ISSUE_NUMBER}/comments"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
 
-    base_prompt = f"""You are a senior engineer fixing a GitHub Issue.
+    try:
+        response = requests.post(url, headers=headers, json={"body": text}, timeout=30)
+        if response.status_code >= 400:
+            print(f"GitHub comment failed: HTTP {response.status_code} {response.text[:300]}")
+    except Exception as exc:
+        print(f"Failed to post GitHub comment: {exc}")
+
+
+def apply_code(files_dict: Optional[Dict[str, str]]) -> Tuple[bool, str]:
+    """
+    Safely write Codex-generated code to the local workspace.
+
+    Expected format:
+    {
+      "relative/path/to/file.py": "full file content",
+      ...
+    }
+    """
+    if not files_dict:
+        return False, "No valid file payload found in Codex response."
+
+    if "path" in files_dict and "content" in files_dict and len(files_dict) == 2:
+        real_path = str(files_dict.get("path", "")).strip()
+        real_content = str(files_dict.get("content", ""))
+        if real_path and real_content and "/" in real_path:
+            print(f"Recovered placeholder response format into real file mapping: {real_path}")
+            files_dict = {real_path: real_content}
+        else:
+            return False, 'Model returned placeholder keys {"path": "...", "content": "..."} only.'
+
+    applied_count = 0
+    skipped_paths = []
+    failed_paths = []
+
+    for path, content in files_dict.items():
+        if not isinstance(path, str) or not isinstance(content, str):
+            failed_paths.append(str(path))
+            continue
+
+        if ".github" in path:
+            skipped_paths.append(path)
+            print(f"Security filter skipped workflow path: {path}")
+            continue
+
+        normalized = path.replace("\\", "/")
+        if path.startswith("/") or ".." in normalized:
+            skipped_paths.append(path)
+            print(f"Security filter blocked path traversal: {path}")
+            continue
+
+        try:
+            directory = os.path.dirname(path)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            print(f"Wrote file: {path}")
+            applied_count += 1
+        except Exception as exc:
+            failed_paths.append(path)
+            print(f"Failed to write {path}: {exc}")
+
+    if applied_count > 0:
+        extras = []
+        if skipped_paths:
+            extras.append(f"skipped={', '.join(skipped_paths)}")
+        if failed_paths:
+            extras.append(f"failed={', '.join(failed_paths)}")
+        suffix = f" ({'; '.join(extras)})" if extras else ""
+        return True, f"Applied {applied_count} file(s){suffix}."
+
+    if skipped_paths:
+        return False, f"All candidate files were blocked by safety policy: {', '.join(skipped_paths)}"
+
+    if failed_paths:
+        return False, f"Failed to write files: {', '.join(failed_paths)}"
+
+    return False, "No files were written."
+
+
+def build_apply_prompt(choice: str, context: str) -> str:
+    style = "conservative minimal-risk" if choice == "A" else "alternative but still practical"
+    return f"""You are Codex fixing a bug reported in a GitHub Issue.
 
 Issue Title: {ISSUE_TITLE}
 Issue Body: {ISSUE_BODY}
 
 Project Context:
-{ctx}
+{context}
 
-Task: Provide a complete fix for this issue.
-Output a clear explanation of your approach and the fixed code."""
+Task:
+- Produce fix strategy "{choice}" in a {style} style.
+- Return ONLY a valid JSON object.
+- Keys must be REAL relative file paths.
+- Values must be COMPLETE replacement file contents.
 
-    plan_a = call_qwen(base_prompt) or "Qwen 方案生成失败"
-    plan_b = call_gemini(base_prompt) or "Gemini 方案生成失败"
-
-    arbitrate_prompt = f"""You are a CTO reviewing two code fixes for a GitHub Issue.
-
-Issue: {ISSUE_TITLE}
-
-PLAN A (Qwen):
-{plan_a}
-
-PLAN B (Gemini):
-{plan_b}
-
-Evaluate both plans and output ONLY valid JSON (no markdown, no explanation outside JSON):
+Example:
 {{
-  "winner": "A or B or HYBRID or NONE",
-  "reason": "brief reason for your choice",
-  "files": {{
-    "actual/relative/path/to/file.js": "complete file content as string"
-  }},
-  "report": "detailed markdown comparison"
+  "src/app.py": "print('hello')\\n",
+  "README.md": "# Project\\n"
 }}
 
-IMPORTANT for "files":
-- Keys MUST be real relative file paths, NOT placeholder words like "path" or "content"
-- Values MUST be complete file contents
-- If winner is NONE, use empty object: {{}}"""
+Do NOT use placeholder keys like "path" or "content".
+Do NOT include markdown fences or explanatory text."""
 
-    raw_verdict = call_gemini(arbitrate_prompt, is_json=True)
-    print(f"[Gemini 仲裁] 原始返回:\n{raw_verdict[:500] if raw_verdict else 'None'}")
+
+def build_plan_prompt(context: str, variant: str) -> str:
+    if variant == "A":
+        strategy = (
+            "Produce a conservative fix plan that minimizes file churn and prefers the "
+            "smallest safe change."
+        )
+    else:
+        strategy = (
+            "Produce an alternative fix plan that may be a bit broader, but should improve "
+            "clarity or robustness if justified."
+        )
+
+    return f"""You are Codex, OpenAI's coding agent, reviewing a GitHub issue.
+
+Issue Title: {ISSUE_TITLE}
+Issue Body: {ISSUE_BODY}
+
+Project Context:
+{context}
+
+Task:
+{strategy}
+
+Output:
+- A concise explanation of the approach.
+- Then the proposed fixed code or patch content in plain text.
+- Make it easy for another reviewer to compare against another plan."""
+
+
+def build_arbiter_prompt(plan_a: str, plan_b: str) -> str:
+    return f"""You are Codex reviewing two candidate fixes for a GitHub issue.
+
+Issue Title: {ISSUE_TITLE}
+Issue Body: {ISSUE_BODY}
+
+PLAN A:
+{plan_a}
+
+PLAN B:
+{plan_b}
+
+Return ONLY valid JSON with this shape:
+{{
+  "winner": "A or B or HYBRID or NONE",
+  "reason": "brief reason for the decision",
+  "files": {{
+    "actual/relative/path/to/file.py": "complete replacement file content"
+  }},
+  "report": "markdown comparison for the GitHub comment"
+}}
+
+Rules:
+- Keys in "files" must be real relative file paths.
+- Values in "files" must be complete replacement contents.
+- If no safe auto-apply is possible, set winner to "NONE" and files to {{}}.
+- Do not include markdown code fences or any text outside the JSON object."""
+
+
+def run_manual_apply(choice: str, context: str) -> None:
+    prompt = build_apply_prompt(choice, context)
+    raw = call_codex(prompt, model=OPENAI_MODEL, expect_json=True)
+
+    preview = raw[:500] if raw else "None"
+    print(f"[Codex {choice}] raw response:\n{preview}")
+
+    files = robust_json_decode(raw)
+    print(f"Decoded file payload: {list(files.keys()) if files else 'None'}")
+
+    success, message = apply_code(files)  # type: ignore[arg-type]
+    if success:
+        post_comment(
+            f"## Codex fix applied\n"
+            f"Applied strategy **{choice}** using **{OPENAI_MODEL}**.\n\n"
+            f"> {message}"
+        )
+        with open("FIX_DONE", "w", encoding="utf-8") as handle:
+            handle.write("SUCCESS")
+        return
+
+    raw_preview = str(raw)[:300] if raw else "No response"
+    post_comment(
+        f"## Codex apply failed\n"
+        f"{message}\n\n"
+        f"> Model: {OPENAI_MODEL}\n"
+        f"> Response preview: `{raw_preview}`"
+    )
+
+
+def run_auto_flow(context: str) -> None:
+    print("Starting Codex comparison flow...")
+
+    plan_a = call_codex(build_plan_prompt(context, "A"), model=OPENAI_MODEL) or "Codex plan A generation failed."
+    plan_b = call_codex(build_plan_prompt(context, "B"), model=OPENAI_MODEL) or "Codex plan B generation failed."
+
+    raw_verdict = call_codex(build_arbiter_prompt(plan_a, plan_b), model=OPENAI_REVIEW_MODEL, expect_json=True)
+    preview = raw_verdict[:500] if raw_verdict else "None"
+    print(f"[Codex arbiter] raw response:\n{preview}")
+
     verdict = robust_json_decode(raw_verdict)
-
-    if verdict and verdict.get("winner") in ["A", "B", "HYBRID"]:
-        winner = verdict["winner"]
-        success, msg = apply_code(verdict.get("files", {}))
+    if verdict and verdict.get("winner") in {"A", "B", "HYBRID"}:
+        winner = str(verdict["winner"])
+        files = verdict.get("files", {})
+        success, message = apply_code(files if isinstance(files, dict) else None)
         if success:
-            post_comment(f"""### 🤖 AI 自动修复结论（{winner}）
-**决策依据**: {verdict.get('reason')}
-
-**修复报告**:
-{verdict.get('report')}
-
----
-*提示：如不满意，可回复 `/apply A` 或 `/apply B` 强制切换方案。*""")
-            with open("FIX_DONE", "w") as f:
-                f.write("SUCCESS")
+            post_comment(
+                "### Codex auto-fix result\n"
+                f"**Winner**: {winner}\n"
+                f"**Reason**: {verdict.get('reason', 'No reason provided')}\n\n"
+                f"**Report**:\n{verdict.get('report', 'No report provided')}\n\n"
+                "---\n"
+                "Reply with `/apply A` or `/apply B` if you want to force one Codex plan."
+            )
+            with open("FIX_DONE", "w", encoding="utf-8") as handle:
+                handle.write("SUCCESS")
             return
-        else:
-            print(f"自动应用方案 {winner} 写入失败: {msg}。已降级为人工选择模式。")
 
-    # 降级：展示双方案供人工选择
-    fallback_msg = f"""### ⚠️ AI 仲裁未自动应用
-系统无法自动部署最佳方案（或选定方案被安全策略拦截）。请查看下方详细对比并进行人工选择。
-#### 🛠 一键修复选项
-回复以下指令以强制应用对应方案：
-- `/apply A` : 应用 Qwen 修复方案
-- `/apply B` : 应用 Gemini 修复方案
+        print(f"Automatic application failed for winner {winner}: {message}")
+
+    fallback_message = f"""### Codex review requires manual choice
+The system could not safely auto-apply a winner, or the selected files were blocked by safety rules.
+
+Reply with one of the following commands to force a plan:
+- `/apply A` : apply Codex plan A
+- `/apply B` : apply Codex plan B
 
 ---
-#### 🔵 方案详情对比
+#### Plan comparison
 
-<details><summary>📳 查看方案 A（Qwen）源码</summary>
+<details><summary>View Plan A</summary>
 
 {plan_a}
 
 </details>
 
-<details><summary>📳 查看方案 B（Gemini）源码</summary>
+<details><summary>View Plan B</summary>
 
 {plan_b}
 
 </details>"""
-    post_comment(fallback_msg)
+    post_comment(fallback_message)
+
+
+def main() -> None:
+    command = re.search(r"/apply\s+(A|B|HYBRID)", COMMENT_BODY, re.IGNORECASE)
+    context = get_context()
+
+    if command:
+        choice = command.group(1).upper()
+        if choice == "HYBRID":
+            post_comment("`/apply HYBRID` is not supported in Codex mode. Use `/apply A` or `/apply B`.")
+            return
+        print(f"Received manual apply command: /apply {choice}")
+        run_manual_apply(choice, context)
+        return
+
+    run_auto_flow(context)
 
 
 if __name__ == "__main__":
     main()
-
