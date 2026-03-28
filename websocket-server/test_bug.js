@@ -14,8 +14,8 @@ function connectWebSocket(url) {
       reject(new Error(`WebSocket connection failed: ${err.message}`));
     });
     
-    socket.on('close', () => {
-      reject(new Error('WebSocket connection closed'));
+    socket.on('close', (code, reason) => {
+      reject(new Error(`WebSocket connection closed: ${code} ${reason}`));
     });
   });
 }
